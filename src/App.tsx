@@ -4,6 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -3055,6 +3056,9 @@ export default function App() {
       <div className={`toast ${toastMsg ? 'on' : ''}`} id="ts" role="status">
         {toastMsg}
       </div>
+
+      {/* VERCEL WEB ANALYTICS */}
+      <Analytics />
     </div>
   );
 }
