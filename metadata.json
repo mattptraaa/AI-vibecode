@@ -1,0 +1,6 @@
+{
+  "name": "UT FAMILY",
+  "description": "Komunitas mahasiswa Universitas Terbuka (UT) - Satu rumah buat semua. Berbagi tips tuton, tugas, kelas webinar, info update, dan tools mahasiswa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,224 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with roles and permissions",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "username": { "type": "string", "maxLength": 30 },
+        "displayName": { "type": "string", "maxLength": 50 },
+        "bio": { "type": "string", "maxLength": 150 },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "moderator", "member"] },
+        "pjClass": { "type": "string" },
+        "hm": { "type": "object" },
+        "hk": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "username", "role"]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "Community posts and class posts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "authorName": { "type": "string", "maxLength": 50 },
+        "authorUsername": { "type": "string", "maxLength": 30 },
+        "authorPhoto": { "type": "string" },
+        "authorRole": { "type": "string" },
+        "isPj": { "type": "boolean" },
+        "content": { "type": "string", "maxLength": 5000 },
+        "imageBase64": { "type": "string", "maxLength": 250000 },
+        "link": { "type": "string", "maxLength": 500 },
+        "topic": { "type": "string", "maxLength": 50 },
+        "classId": { "type": "string", "maxLength": 50 },
+        "isPinned": { "type": "boolean" },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "likes": { "type": "array" },
+        "reportsCount": { "type": "number" },
+        "isReported": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "authorName", "topic", "createdAt"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Post comments and nested replies",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "postId": { "type": "string" },
+        "uid": { "type": "string" },
+        "authorName": { "type": "string", "maxLength": 50 },
+        "authorUsername": { "type": "string", "maxLength": 30 },
+        "authorPhoto": { "type": "string" },
+        "content": { "type": "string", "maxLength": 2000 },
+        "reportsCount": { "type": "number" },
+        "isReported": { "type": "boolean" },
+        "replies": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["postId", "uid", "authorName", "content", "createdAt"]
+    },
+    "Kelas": {
+      "title": "Kelas",
+      "description": "Student activity class / webinar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 300 },
+        "meetingsCount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "KelasMember": {
+      "title": "KelasMember",
+      "description": "Membership in a class",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "username": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "ok", "rejected"] },
+        "appliedAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "status"]
+    },
+    "Materi": {
+      "title": "Materi",
+      "description": "Class study materials",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "link": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["title", "createdAt"]
+    },
+    "ForumQuestion": {
+      "title": "ForumQuestion",
+      "description": "Class Q&A question",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "uid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "question": { "type": "string", "maxLength": 2000 },
+        "answers": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "question", "createdAt"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Content moderation reports",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["post", "comment", "reply"] },
+        "postId": { "type": "string" },
+        "commentId": { "type": "string" },
+        "classId": { "type": "string" },
+        "reportedByUid": { "type": "string" },
+        "targetAuthorName": { "type": "string" },
+        "contentSnippet": { "type": "string", "maxLength": 300 },
+        "status": { "type": "string", "enum": ["pending", "resolved", "dismissed"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["targetType", "reportedByUid", "status", "createdAt"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Official community announcements",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string", "maxLength": 150 },
+        "content": { "type": "string", "maxLength": 3000 },
+        "category": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorRole": { "type": "string" },
+        "authorUid": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["content", "authorName", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "toUid": { "type": "string" },
+        "fromUid": { "type": "string" },
+        "fromName": { "type": "string" },
+        "fromUsername": { "type": "string" },
+        "fromPhoto": { "type": "string" },
+        "type": { "type": "string" },
+        "kind": { "type": "string" },
+        "postId": { "type": "string" },
+        "snippet": { "type": "string", "maxLength": 300 },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["toUid", "fromUid", "type", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and permissions"
+    },
+    "/posts/{postId}": {
+      "schema": "Post",
+      "description": "Public and class posts"
+    },
+    "/posts/{postId}/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Comments and replies for posts"
+    },
+    "/kelas/{classId}": {
+      "schema": "Kelas",
+      "description": "Activity classes"
+    },
+    "/kelas/{classId}/members/{userId}": {
+      "schema": "KelasMember",
+      "description": "Members enrolled or applied to a class"
+    },
+    "/kelas/{classId}/materi/{materiId}": {
+      "schema": "Materi",
+      "description": "Materials for a class"
+    },
+    "/kelas/{classId}/forum/{forumId}": {
+      "schema": "ForumQuestion",
+      "description": "Questions and answers for class forum"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "Moderation reports"
+    },
+    "/announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Official community announcements"
+    },
+    "/notifications/{userId}/items/{itemId}": {
+      "schema": "Notification",
+      "description": "Personal user notifications"
+    }
+  }
+}

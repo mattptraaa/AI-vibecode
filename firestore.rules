@@ -1,0 +1,203 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && (
+        request.auth.token.email_verified == true ||
+        request.auth.token.firebase.sign_in_provider == 'google.com'
+      );
+    }
+
+    // Bootstrap Admin check strictly enforced via email and verified state
+    function isBootstrapAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'rahmatadisaputra021@gmail.com' &&
+        (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
+    function getUserData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+
+    function isAdmin() {
+      return isBootstrapAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData(request.auth.uid).role == 'admin'
+      );
+    }
+
+    function isModerator() {
+      return isAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData(request.auth.uid).role == 'moderator'
+      );
+    }
+
+    function isPj(classId) {
+      return isAdmin() || (
+        isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        getUserData(request.auth.uid).pjClass == classId
+      );
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      // Anyone can read profiles to check username availability and view member cards
+      allow read: if true;
+
+      // Creation on sign up: user must be signed in as userId.
+      // Bootstrap admin email can be admin or member, all other accounts MUST be member
+      allow create: if isSignedIn() && request.auth.uid == userId && (
+        (request.auth.token.email == 'rahmatadisaputra021@gmail.com' && (request.resource.data.role == 'admin' || request.resource.data.role == 'member')) ||
+        (request.auth.token.email != 'rahmatadisaputra021@gmail.com' && request.resource.data.role == 'member')
+      );
+
+      // Update: Admin can update any user; owner can update profile fields but NOT role/pjClass/hm/hk
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (
+          request.auth.uid == userId &&
+          request.resource.data.role == resource.data.role &&
+          request.resource.data.get('pjClass', null) == resource.data.get('pjClass', null) &&
+          request.resource.data.get('hm', null) == resource.data.get('hm', null) &&
+          request.resource.data.get('hk', null) == resource.data.get('hk', null)
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // POSTS COLLECTION
+    match /posts/{postId} {
+      allow read: if true;
+
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.content is string &&
+        request.resource.data.content.size() <= 5000;
+
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        isModerator() ||
+        (resource.data.get('classId', '') != '' && isPj(resource.data.classId)) ||
+        (request.auth.uid == resource.data.uid) ||
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'likesCount', 'reportsCount', 'isReported', 'commentsCount'])
+      );
+
+      allow delete: if isSignedIn() && (
+        isAdmin() ||
+        isModerator() ||
+        request.auth.uid == resource.data.uid ||
+        (resource.data.get('classId', '') != '' && isPj(resource.data.classId))
+      );
+
+      // COMMENTS SUBCOLLECTION
+      match /comments/{commentId} {
+        allow read: if true;
+
+        allow create: if isSignedIn() &&
+          request.resource.data.uid == request.auth.uid &&
+          request.resource.data.content is string &&
+          request.resource.data.content.size() <= 2000;
+
+        allow update: if isSignedIn() && (
+          isAdmin() ||
+          isModerator() ||
+          request.auth.uid == resource.data.uid ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['replies', 'reportsCount', 'isReported'])
+        );
+
+        allow delete: if isSignedIn() && (
+          isAdmin() ||
+          isModerator() ||
+          request.auth.uid == resource.data.uid ||
+          request.auth.uid == get(/databases/$(database)/documents/posts/$(postId)).data.uid
+        );
+      }
+    }
+
+    // KELAS COLLECTION
+    match /kelas/{classId} {
+      allow read: if true;
+      allow write: if isAdmin();
+
+      // Members subcollection
+      match /members/{memberId} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          request.auth.uid == memberId &&
+          request.resource.data.status == 'pending';
+
+        allow update, delete: if isSignedIn() && (
+          isAdmin() ||
+          isPj(classId) ||
+          request.auth.uid == memberId
+        );
+      }
+
+      // Materi subcollection
+      match /materi/{materiId} {
+        allow read: if isSignedIn();
+        allow write: if isPj(classId) || isAdmin();
+      }
+
+      // Forum subcollection
+      match /forum/{forumId} {
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn() &&
+          request.resource.data.uid == request.auth.uid;
+
+        allow update: if isSignedIn() && (
+          isAdmin() ||
+          isPj(classId) ||
+          request.auth.uid == resource.data.uid ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers'])
+        );
+
+        allow delete: if isSignedIn() && (
+          isAdmin() ||
+          isPj(classId) ||
+          request.auth.uid == resource.data.uid
+        );
+      }
+    }
+
+    // REPORTS COLLECTION
+    match /reports/{reportId} {
+      allow read: if isModerator();
+      allow create: if isSignedIn() && request.resource.data.reportedByUid == request.auth.uid;
+      allow update, delete: if isModerator() || (resource.data.get('classId', '') != '' && isPj(resource.data.classId));
+    }
+
+    // ANNOUNCEMENTS COLLECTION
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow write: if isModerator();
+    }
+
+    // NOTIFICATIONS COLLECTION
+    match /notifications/{userId}/items/{itemId} {
+      allow read, update, delete: if isOwner(userId);
+      allow create: if isSignedIn();
+    }
+  }
+}

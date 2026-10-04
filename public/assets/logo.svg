@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <defs>
+    <!-- Top arc path for "KOMUNITAS MAHASISWA UT" -->
+    <path id="topArc" d="M 65 250 A 185 185 0 0 1 435 250" fill="none" />
+    <!-- Bottom arc path for "NO ONE, WE ARE FAMILY" -->
+    <path id="bottomArc" d="M 70 250 A 180 180 0 0 0 430 250" fill="none" />
+    <!-- Linear gradients -->
+    <linearGradient id="yellowGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFE600" />
+      <stop offset="100%" stop-color="#FFB300" />
+    </linearGradient>
+    <linearGradient id="pinkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF2A85" />
+      <stop offset="100%" stop-color="#FF65A5" />
+    </linearGradient>
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00E5FF" />
+      <stop offset="100%" stop-color="#00B0FF" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Circle -->
+  <circle cx="250" cy="250" r="248" fill="#ffffff" stroke="#f0f4f8" stroke-width="2" />
+
+  <!-- Top Text: KOMUNITAS MAHASISWA UT -->
+  <text font-family="'Instrument Sans', 'Arial Black', sans-serif" font-weight="800" font-size="25" fill="#FF1D8D" letter-spacing="3">
+    <textPath href="#topArc" startOffset="50%" text-anchor="middle">
+      KOMUNITAS MAHASISWA UT
+    </textPath>
+  </text>
+
+  <!-- Bottom Text: NO ONE, WE ARE FAMILY -->
+  <text font-family="'Instrument Sans', 'Arial Black', sans-serif" font-weight="800" font-size="23" fill="#00D2FF" letter-spacing="4">
+    <textPath href="#bottomArc" startOffset="50%" text-anchor="middle">
+      NO ONE, WE ARE FAMILY
+    </textPath>
+  </text>
+
+  <!-- Circular Outer Orbits -->
+  <path d="M 80 190 A 190 190 0 0 1 405 130" stroke="#FFE600" stroke-width="4.5" fill="none" stroke-linecap="round" />
+  <path d="M 95 210 A 175 175 0 0 1 370 120" stroke="#00D2FF" stroke-width="3" fill="none" stroke-linecap="round" />
+  <path d="M 75 290 A 195 195 0 0 0 380 415" stroke="#FF2A85" stroke-width="6" fill="none" stroke-linecap="round" />
+  <path d="M 170 300 A 140 140 0 0 0 345 365" stroke="#00D2FF" stroke-width="4" fill="none" stroke-linecap="round" />
+  <path d="M 270 310 A 110 110 0 0 0 345 355" stroke="#FFE600" stroke-width="3" fill="none" stroke-linecap="round" />
+
+  <!-- Orbit Dots -->
+  <circle cx="56" cy="190" r="14" fill="#00E5FF" />
+  <circle cx="118" cy="165" r="12" fill="#FFE600" />
+  <circle cx="152" cy="672" r="1" fill="none" />
+  <circle cx="155" cy="336" r="18" fill="#FF2A85" />
+
+  <!-- Yellow Stylized Dynamic V Shape -->
+  <path d="M 100 160 Q 115 150 125 190 L 140 330 Q 155 370 195 365 L 280 180 Q 295 145 275 160 L 210 280 Q 195 305 185 280 L 135 180 Q 125 155 100 160 Z" fill="url(#yellowGrad)" />
+  <path d="M 140 145 L 205 320 Q 212 335 225 320 L 320 135 Q 330 115 315 130 L 235 275 Q 225 292 218 275 L 165 140 Q 155 125 140 145 Z" fill="#FFE600" opacity="0.9" />
+
+  <!-- UT Official Emblem (Globe / Lamp / Book) -->
+  <g transform="translate(235, 115) scale(0.95)">
+    <!-- Globe outline -->
+    <ellipse cx="40" cy="40" rx="42" ry="42" fill="#0E3868" />
+    <!-- White latitude slices -->
+    <path d="M 12 25 Q 40 21 68 25" stroke="#ffffff" stroke-width="3" fill="none" />
+    <path d="M 4 40 Q 40 35 76 40" stroke="#ffffff" stroke-width="3.5" fill="none" />
+    <path d="M 10 55 Q 40 50 70 55" stroke="#ffffff" stroke-width="3" fill="none" />
+    <!-- Center pillar / tower -->
+    <path d="M 38 4 L 42 4 L 44 76 L 36 76 Z" fill="#ffffff" />
+    <!-- Open Book under globe -->
+    <path d="M 2 82 Q 40 68 78 82 L 78 98 Q 40 85 2 98 Z" fill="#FFD23F" stroke="#0E3868" stroke-width="2" />
+    <path d="M 40 75 L 40 92" stroke="#0E3868" stroke-width="3" />
+    <path d="M 10 88 Q 25 82 36 85" stroke="#0E3868" stroke-width="1.8" fill="none" />
+    <path d="M 44 85 Q 55 82 70 88" stroke="#0E3868" stroke-width="1.8" fill="none" />
+  </g>
+
+  <!-- Big Central Text: UT FAMILY -->
+  <g transform="translate(202, 275)">
+    <!-- Shadow -->
+    <text x="70" y="0" text-anchor="middle" font-family="'Instrument Sans', 'Arial Black', sans-serif" font-weight="900" font-size="52" fill="#E6A800" letter-spacing="-0.5">
+      UT FAMILY
+    </text>
+    <text x="68" y="-2" text-anchor="middle" font-family="'Instrument Sans', 'Arial Black', sans-serif" font-weight="900" font-size="52" fill="#FFE600" letter-spacing="-0.5">
+      UT FAMILY
+    </text>
+  </g>
+
+  <!-- Central Subtext: Nasional -->
+  <g transform="translate(202, 325)">
+    <text x="68" y="0" text-anchor="middle" font-family="'Instrument Sans', 'Arial Black', sans-serif" font-weight="800" font-size="44" fill="#00D2FF" letter-spacing="1">
+      Nasional
+    </text>
+  </g>
+</svg>
