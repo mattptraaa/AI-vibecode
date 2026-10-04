@@ -198,44 +198,22 @@ export const ToolsMahasiswa: React.FC = () => {
           </div>
         )}
 
-        <div
+        <a
+          href="https://tools-tugas.utfamily.my.id"
+          target="_blank"
+          rel="noopener noreferrer"
           className="k"
-          style={{ cursor: 'pointer', border: activeTool === 'nugas' ? '2px solid var(--sky-d)' : '1px solid var(--line)' }}
-          onClick={() => setActiveTool(activeTool === 'nugas' ? null : 'nugas')}
+          style={{ textDecoration: 'none', color: 'inherit' }}
         >
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <FileText size={18} color="var(--sky-d)" />
               <b>Tools Nugas & Kerangka Tugas Kuliah</b>
             </div>
-            <small>Buat kerangka sistematika tugas kuliah terstruktur sesuai standar penulisan BMP Universitas Terbuka</small>
+            <small>Kunjungi tools nugas di subdomain tools-tugas.utfamily.my.id untuk membuat kerangka tugas kuliah otomatis</small>
           </div>
-          <em>{activeTool === 'nugas' ? 'Tutup' : 'Buka Alat'}</em>
-        </div>
-
-        {/* Nugas Expanded Form */}
-        {activeTool === 'nugas' && (
-          <div style={{ background: 'var(--card)', borderRadius: '16px', padding: '18px', marginTop: '12px', border: '1.5px solid var(--line)' }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 800, marginBottom: '8px' }}>Generator Kerangka Tugas Kuliah</h3>
-            <input
-              type="text"
-              value={taskTopic}
-              onChange={(e) => setTaskTopic(e.target.value)}
-              placeholder="Masukkan topik atau judul tugas (contoh: Analisis Manajemen Rantai Pasok)..."
-              style={{ width: '100%', padding: '10px 14px', borderRadius: '10px', border: '1.5px solid var(--line)', background: 'var(--paper)', fontSize: '14px', marginBottom: '8px' }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="pill" type="button" onClick={handleGenerateOutline}>
-                Susun Kerangka Tugas
-              </button>
-            </div>
-            {taskOutline && (
-              <div style={{ marginTop: '14px', padding: '14px', background: 'var(--paper)', border: '1.5px solid var(--line)', borderRadius: '12px', fontSize: '13px', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                {taskOutline}
-              </div>
-            )}
-          </div>
-        )}
+          <em>Kunjungi Situs &#8599;</em>
+        </a>
       </div>
     </div>
   );

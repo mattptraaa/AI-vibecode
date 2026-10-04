@@ -60,6 +60,45 @@ import { ToolsMahasiswa } from './components/ToolsMahasiswa';
 const ADMIN_EMAIL = 'rahmatadisaputra021@gmail.com';
 const PAGE_SIZE = 20;
 
+// Helper to format dates cleanly without bugs (supports Firestore Timestamp, numbers, ISO strings)
+const formatCommentDate = (rawDate: any): string => {
+  if (!rawDate) return '';
+  let d: Date;
+  try {
+    if (typeof rawDate === 'object' && rawDate !== null && typeof rawDate.toDate === 'function') {
+      d = rawDate.toDate();
+    } else if (typeof rawDate === 'object' && rawDate !== null && typeof rawDate.seconds === 'number') {
+      d = new Date(rawDate.seconds * 1000);
+    } else if (typeof rawDate === 'number' || typeof rawDate === 'string') {
+      d = new Date(rawDate);
+    } else {
+      d = new Date(rawDate);
+    }
+  } catch {
+    return '';
+  }
+
+  if (isNaN(d.getTime())) return '';
+
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMins < 1) return 'Baru saja';
+  if (diffMins < 60) return `${diffMins}m yang lalu`;
+  if (diffHours < 24) return `${diffHours}j yang lalu`;
+  if (diffDays < 7) return `${diffDays}h yang lalu`;
+
+  return d.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
+
 export default function App() {
   // Theme state
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -1088,7 +1127,7 @@ export default function App() {
                               : 'berkomentar di postinganmu'}
                           </div>
                           <div className="nx">{n.snippet || '(Foto atau tautan)'}</div>
-                          <small>{new Date(n.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</small>
+                          <small>{formatCommentDate(n.createdAt)}</small>
                         </div>
                       </button>
                     ))
@@ -1240,61 +1279,42 @@ export default function App() {
         {currentRoute === 'login' && (
           <section className="view on" id="login">
             <div className="lg">
-              <form className="box" id="lf" onSubmit={handleLogin} autoComplete="off">
+              <div className="box" id="lf">
                 <div className="mark" role="img" aria-label="Logo"></div>
                 <h2>Masuk</h2>
-                <p className="s">Pakai akun UT Family kamu</p>
+                <p className="s">No one, we are family</p>
 
-                <label htmlFor="u">Username atau Email</label>
-                <input
-                  id="u"
-                  name="u"
-                  value={loginEmailOrUsername}
-                  onChange={(e) => setLoginEmailOrUsername(e.target.value)}
-                  autoCapitalize="none"
-                  autoComplete="username"
-                  required
-                />
-
-                <label htmlFor="p">Password</label>
-                <div className="pw">
-                  <input
-                    id="p"
-                    type={loginShowPassword ? 'text' : 'password'}
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    autoComplete="current-password"
-                    required
-                  />
-                  <button
-                    type="button"
-                    className="eye"
-                    onClick={() => setLoginShowPassword(!loginShowPassword)}
-                    aria-label="Tampilkan password"
-                  >
-                    {loginShowPassword ? <Ico name="eyeoff" /> : <Ico name="eye" />}
-                  </button>
-                </div>
-
-                {loginSuccess && <div className="ok" id="lok">{loginSuccess}</div>}
                 {loginError && <div className="err" id="err">{loginError}</div>}
 
-                <button className="pill" type="submit">
-                  Masuk
+                <button
+                  type="button"
+                  className="google-btn"
+                  onClick={handleGoogleSignIn}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '12px',
+                    padding: '14px 20px',
+                    fontSize: '15px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    marginTop: '20px'
+                  }}
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.03h3.88c2.27-2.09 3.665-5.17 3.665-9.12z" />
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.03c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.26v3.13C3.27 21.39 7.32 24 12 24z" />
+                    <path fill="#FBBC05" d="M5.28 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.58H1.26C.46 8.17 0 9.99 0 12s.46 3.83 1.26 5.42l4.02-3.13z" />
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.32 0 3.27 2.61 1.26 6.58l4.02 3.13c.95-2.83 3.6-4.96 6.72-4.96z" />
+                  </svg>
+                  <span>Masuk via Google</span>
                 </button>
 
-                <div className="divider">atau</div>
-
-                <button type="button" className="google-btn" onClick={handleGoogleSignIn}>
-                  Masuk dengan Google
-                </button>
-
-                <div className="alt">
-                  <a href="#/lupa">Lupa password</a>
-                  <span aria-hidden="true">|</span>
-                  <a href="#/daftar">Buat akun</a>
-                </div>
-              </form>
+                <p style={{ marginTop: '16px', fontSize: '13px', color: 'var(--ink2)', textAlign: 'center', lineHeight: 1.5 }}>
+                  Gunakan akun Google aktif kamu untuk langsung masuk tanpa perlu verifikasi manual.
+                </p>
+              </div>
             </div>
           </section>
         )}
@@ -1726,7 +1746,7 @@ export default function App() {
                               </button>
                               {post.authorRole === 'Admin' && <span className="adm">Admin</span>}
                               {post.authorRole === 'PJ Kelas' && <span className="adm">PJ</span>}
-                              <small>{new Date(post.createdAt).toLocaleDateString('id-ID')}</small>
+                              <small>{formatCommentDate(post.createdAt)}</small>
                             </div>
 
                             <span className="tag">{post.topic}</span>
@@ -1845,7 +1865,7 @@ export default function App() {
                                     </div>
                                     <div className="t">
                                       <b>{c.authorName}</b>
-                                      <small>{new Date(c.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</small>
+                                      <small>{formatCommentDate(c.createdAt)}</small>
                                       <div>{c.content}</div>
 
                                       <div className="ca">
@@ -1883,7 +1903,7 @@ export default function App() {
                                           </div>
                                           <div className="t">
                                             <b>{r.authorName}</b>
-                                            <small>{new Date(r.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}</small>
+                                            <small>{formatCommentDate(r.createdAt)}</small>
                                             <div>{r.content}</div>
                                           </div>
                                         </div>
