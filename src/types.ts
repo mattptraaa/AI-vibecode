@@ -25,6 +25,7 @@ export interface UserProfile {
   photoURL?: string;
   role: UserRole;
   pjClass?: string | null;
+  following?: string[];
   hm?: ModeratorRights;
   hk?: PjRights;
   createdAt?: string;
@@ -65,9 +66,12 @@ export interface PostItem {
   authorUsername: string;
   authorPhoto?: string;
   authorRole?: string;
+  authorPjClass?: string | null;
   isPj?: boolean;
   content: string;
   imageBase64?: string;
+  pdfBase64?: string;
+  pdfName?: string;
   link?: string;
   topic: string;
   classId?: string;
@@ -79,6 +83,7 @@ export interface PostItem {
   isReported?: boolean;
   createdAt: number;
   updatedAt?: number;
+  editedAt?: number;
   // Local UI state
   commentsOpen?: boolean;
   commentsSort?: 'new' | 'old';
@@ -108,6 +113,9 @@ export interface MateriItem {
   title: string;
   description: string;
   link?: string;
+  mediaBase64?: string;
+  mediaType?: 'image' | 'pdf';
+  mediaName?: string;
   createdAt: number;
   createdBy?: string;
 }
@@ -138,6 +146,7 @@ export interface AnnouncementItem {
   authorRole: string;
   authorUid: string;
   createdAt: number;
+  editedAt?: number;
 }
 
 export interface NotificationItem {
@@ -145,11 +154,11 @@ export interface NotificationItem {
   toUid: string;
   fromUid: string;
   fromName: string;
-  fromUsername: string;
+  fromUsername?: string;
   fromPhoto?: string;
-  type: 'post' | 'tag' | 'reply' | 'comment';
+  type: 'post' | 'tag' | 'reply' | 'comment' | 'follow';
   kind?: string;
-  postId: string;
+  postId?: string;
   snippet: string;
   read: boolean;
   createdAt: number;

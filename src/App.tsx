@@ -99,6 +99,58 @@ const formatCommentDate = (rawDate: any): string => {
   });
 };
 
+const autoResizeTextarea = (el: HTMLTextAreaElement | null) => {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = Math.max(80, el.scrollHeight) + 'px';
+};
+
+interface UserReplyItem {
+  id: string;
+  postId: string;
+  postSnippet: string;
+  postTopic: string;
+  content: string;
+  createdAt: number;
+  isReply?: boolean;
+  replyToName?: string;
+}
+
+const readFileAsBase64 = (
+  file: File
+): Promise<{ base64: string; name: string; size: string; type: 'image' | 'pdf' }> => {
+  return new Promise((resolve, reject) => {
+    if (file.size > 8 * 1024 * 1024) {
+      reject(new Error('Ukuran file maksimal 8 MB'));
+      return;
+    }
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/');
+
+    if (!isPdf && !isImage) {
+      reject(new Error('Format file harus berupa Gambar (JPG/PNG) atau Dokumen PDF'));
+      return;
+    }
+
+    const sizeStr =
+      file.size > 1024 * 1024
+        ? `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+        : `${Math.round(file.size / 1024)} KB`;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve({
+        base64: reader.result as string,
+        name: file.name,
+        size: sizeStr,
+        type: isPdf ? 'pdf' : 'image'
+      });
+    };
+    reader.onerror = () => reject(new Error('Gagal membaca file'));
+    reader.readAsDataURL(file);
+  });
+};
+
 export default function App() {
   // Theme state
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -160,6 +212,7 @@ export default function App() {
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>([]);
   const [annText, setAnnText] = useState('');
   const [annCategory, setAnnCategory] = useState('Umum');
+  const annInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Kelas state
   const [currentClassId, setCurrentClassId] = useState<string>('desain');
@@ -173,6 +226,38 @@ export default function App() {
   const [moderasiTab, setModerasiTab] = useState<'rep' | 'usr'>('rep');
   const [selectedUserForPj, setSelectedUserForPj] = useState<string | null>(null);
   const [openHakUserId, setOpenHakUserId] = useState<string | null>(null);
+  const [modMemberSearch, setModMemberSearch] = useState('');
+  const [modRoleFilter, setModRoleFilter] = useState<'all' | 'admin' | 'moderator' | 'pj' | 'member'>('all');
+
+  // Class Composer & Media state
+  const [classPostText, setClassPostText] = useState('');
+  const [classPostMedia, setClassPostMedia] = useState<{ name: string; type: 'image' | 'pdf'; base64: string } | null>(null);
+  const classFileInputRef = useRef<HTMLInputElement>(null);
+  const classPostInputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Class Materi Media state
+  const [materiMedia, setMateriMedia] = useState<{ name: string; type: 'image' | 'pdf'; base64: string } | null>(null);
+  const materiFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Profile tabs state (postingan & balasan)
+  const [profileTab, setProfileTab] = useState<'posts' | 'replies'>('posts');
+  const [viewedAccountTab, setViewedAccountTab] = useState<'posts' | 'replies'>('posts');
+  const [userRepliesMap, setUserRepliesMap] = useState<Record<string, UserReplyItem[]>>({});
+  const [loadingReplies, setLoadingReplies] = useState(false);
+
+  // Edit Post & Announcement state (< 10 menit)
+  const [editingPost, setEditingPost] = useState<PostItem | null>(null);
+  const [editPostContent, setEditPostContent] = useState('');
+  const [editPostTopic, setEditPostTopic] = useState('Umum');
+  const [editPostLink, setEditPostLink] = useState('');
+
+  const [editingAnn, setEditingAnn] = useState<AnnouncementItem | null>(null);
+  const [editAnnContent, setEditAnnContent] = useState('');
+  const [editAnnCategory, setEditAnnCategory] = useState('Umum');
+
+  // Kelas Members state
+  const [classMembers, setClassMembers] = useState<KelasMemberItem[]>([]);
+  const [isApplyingClass, setIsApplyingClass] = useState(false);
 
   // Profile view / Edit state
   const [editingProfile, setEditingProfile] = useState(false);
@@ -210,6 +295,36 @@ export default function App() {
       setToastMsg((cur) => (cur === msg ? null : cur));
     }, 2800);
   }, []);
+
+  const handleLogout = useCallback(async (msg?: any) => {
+    await signOut(auth);
+    window.location.hash = '#/home';
+    const message = typeof msg === 'string' ? msg : 'Kamu telah keluar.';
+    showToast(message);
+  }, [showToast]);
+
+  // Auto-logout setelah 15 menit tidak ada aktivitas
+  useEffect(() => {
+    if (!firebaseUser) return;
+    const INACTIVITY_LIMIT_MS = 15 * 60 * 1000; // 15 menit
+    let timer: any;
+
+    const resetInactivityTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        handleLogout('Sesi berakhir otomatis karena tidak ada aktivitas selama 15 menit.');
+      }, INACTIVITY_LIMIT_MS);
+    };
+
+    const userEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
+    userEvents.forEach((evt) => window.addEventListener(evt, resetInactivityTimer, { passive: true }));
+    resetInactivityTimer();
+
+    return () => {
+      clearTimeout(timer);
+      userEvents.forEach((evt) => window.removeEventListener(evt, resetInactivityTimer));
+    };
+  }, [firebaseUser, handleLogout]);
 
   // Sync theme
   useEffect(() => {
@@ -412,9 +527,31 @@ export default function App() {
     ? 'PJ Kelas'
     : 'Member';
 
-  // Handle Mentions autocomplete in composer
+  // Helper untuk tag role (Admin, Moderator, PJ Kelas)
+  const getUserRoleBadge = (uid: string, fallbackRole?: string, fallbackPj?: string | null) => {
+    const user = allUsersList.find((u) => u.uid === uid);
+    const role = user?.role || fallbackRole;
+    const pjClass = user?.pjClass || fallbackPj;
+
+    if (role === 'admin' || user?.email === ADMIN_EMAIL) {
+      return <span className="adm role-admin">Admin</span>;
+    }
+    if (role === 'moderator') {
+      return <span className="adm role-mod">Moderator</span>;
+    }
+    if (role === 'PJ Kelas' || pjClass) {
+      return <span className="adm role-pj">PJ {pjClass ? pjClass.toUpperCase() : 'Kelas'}</span>;
+    }
+    return null;
+  };
+
+  // Handle Mentions autocomplete in composer & auto-expand height
   const handleComposerInput = (text: string) => {
     setPostText(text);
+    if (composerInputRef.current) {
+      composerInputRef.current.style.height = 'auto';
+      composerInputRef.current.style.height = Math.max(80, composerInputRef.current.scrollHeight) + 'px';
+    }
     const cursor = composerInputRef.current?.selectionStart || text.length;
     const textBeforeCursor = text.slice(0, cursor);
     const match = textBeforeCursor.match(/(?:^|\s)@([a-z0-9_.]*)$/i);
@@ -442,7 +579,7 @@ export default function App() {
     t.focus();
   };
 
-  // Create Post
+  // Create Post (Beranda atau Postingan Kelas)
   const handleCreatePost = async (classIdTarget?: string) => {
     if (!firebaseUser || !userProfile) {
       window.location.hash = '#/login';
@@ -454,8 +591,16 @@ export default function App() {
       return;
     }
 
-    const trimmed = postText.trim();
-    if (!trimmed && !postImageBase64 && !postLink) return;
+    const isClassPost = !!classIdTarget;
+    const textToUse = isClassPost ? classPostText.trim() : postText.trim();
+    const imageToUse = isClassPost
+      ? (classPostMedia?.type === 'image' ? classPostMedia.base64 : '')
+      : (postImageBase64 || '');
+    const pdfBase64ToUse = isClassPost && classPostMedia?.type === 'pdf' ? classPostMedia.base64 : '';
+    const pdfNameToUse = isClassPost && classPostMedia?.type === 'pdf' ? classPostMedia.name : '';
+    const linkToUse = isClassPost ? '' : (postLink || '');
+
+    if (!textToUse && !imageToUse && !pdfBase64ToUse && !linkToUse) return;
 
     try {
       const newPostDoc = doc(collection(db, 'posts'));
@@ -467,9 +612,11 @@ export default function App() {
         authorPhoto: userProfile.photoURL || '',
         authorRole: roleLabel,
         isPj: !!userProfile.pjClass && userProfile.pjClass === classIdTarget,
-        content: trimmed,
-        imageBase64: postImageBase64 || '',
-        link: postLink || '',
+        content: textToUse,
+        imageBase64: imageToUse,
+        pdfBase64: pdfBase64ToUse || undefined,
+        pdfName: pdfNameToUse || undefined,
+        link: linkToUse,
         topic: classIdTarget ? 'Kelas' : postTopic,
         classId: classIdTarget || '',
         isPinned: false,
@@ -484,7 +631,7 @@ export default function App() {
       setPosts((prev) => [postData, ...prev]);
 
       // Fire notifications for mentions
-      const mentionMatches = trimmed.match(/@[a-z0-9_.]{3,20}/gi) || [];
+      const mentionMatches = textToUse.match(/@[a-z0-9_.]{3,20}/gi) || [];
       for (const m of mentionMatches) {
         const uTarget = m.slice(1).toLowerCase();
         const targetUser = allUsersList.find((u) => u.username.toLowerCase() === uTarget);
@@ -499,18 +646,25 @@ export default function App() {
             fromPhoto: userProfile.photoURL || '',
             type: 'tag',
             postId: newPostDoc.id,
-            snippet: trimmed.slice(0, 100),
+            snippet: textToUse.slice(0, 100),
             read: false,
             createdAt: Date.now()
           });
         }
       }
 
-      setPostText('');
-      setPostImageBase64(null);
-      setPostLink(null);
-      setLinkInputVisible(false);
-      setMediaMenuOpen(false);
+      if (isClassPost) {
+        setClassPostText('');
+        setClassPostMedia(null);
+        if (classPostInputRef.current) classPostInputRef.current.style.height = 'auto';
+      } else {
+        setPostText('');
+        setPostImageBase64(null);
+        setPostLink(null);
+        setLinkInputVisible(false);
+        setMediaMenuOpen(false);
+        if (composerInputRef.current) composerInputRef.current.style.height = 'auto';
+      }
       showToast('Postingan diterbitkan.');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'posts');
@@ -573,11 +727,11 @@ export default function App() {
     }
   };
 
-  // Pin / Unpin Post
+  // Pin / Unpin Post (Maksimal 3 postingan disematkan)
   const handleTogglePin = async (post: PostItem) => {
     const canPin = post.classId
-      ? hasPjRight(post.classId, 'pin')
-      : hasModRight('pin');
+      ? (isUserAdmin || hasPjRight(post.classId, 'pin'))
+      : (isUserAdmin || hasModRight('pin'));
 
     if (!canPin) {
       showToast('Kamu tidak punya wewenang menyematkan postingan ini.');
@@ -585,13 +739,28 @@ export default function App() {
     }
 
     const newPinState = !post.isPinned;
+    if (newPinState) {
+      const currentPinnedCount = posts.filter((p) =>
+        post.classId ? p.classId === post.classId && p.isPinned : !p.classId && p.isPinned
+      ).length;
+
+      if (currentPinnedCount >= 3) {
+        showToast(
+          post.classId
+            ? 'Maksimal 3 postingan kelas yang dapat disematkan (pin).'
+            : 'Maksimal 3 postingan yang dapat disematkan (pin).'
+        );
+        return;
+      }
+    }
+
     setPosts((prev) =>
       prev.map((p) => (p.id === post.id ? { ...p, isPinned: newPinState } : p))
     );
 
     try {
       await updateDoc(doc(db, 'posts', post.id), { isPinned: newPinState });
-      showToast(newPinState ? 'Postingan disematkan' : 'Sematan dilepas');
+      showToast(newPinState ? 'Postingan disematkan ke paling atas' : 'Sematan dilepas');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `posts/${post.id}`);
     }
@@ -705,6 +874,26 @@ export default function App() {
         )
       );
 
+      // Realtime update in replies map
+      setUserRepliesMap((prev) => {
+        const cur = prev[firebaseUser.uid] || [];
+        return {
+          ...prev,
+          [firebaseUser.uid]: [
+            {
+              id: newCommentDoc.id,
+              postId: post.id,
+              postSnippet: post.content.slice(0, 80),
+              postTopic: post.topic,
+              content: commentText.trim(),
+              createdAt: Date.now(),
+              isReply: false
+            },
+            ...cur
+          ]
+        };
+      });
+
       // Notify post author if not self
       if (post.uid !== firebaseUser.uid) {
         const notifDoc = doc(collection(db, 'notifications', post.uid, 'items'));
@@ -763,6 +952,27 @@ export default function App() {
         )
       );
 
+      // Realtime update in replies map
+      setUserRepliesMap((prev) => {
+        const cur = prev[firebaseUser.uid] || [];
+        return {
+          ...prev,
+          [firebaseUser.uid]: [
+            {
+              id: newReply.id,
+              postId: post.id,
+              postSnippet: post.content.slice(0, 80),
+              postTopic: post.topic,
+              content: replyText.trim(),
+              createdAt: Date.now(),
+              isReply: true,
+              replyToName: comment.authorName
+            },
+            ...cur
+          ]
+        };
+      });
+
       // Notify comment author
       if (comment.uid !== firebaseUser.uid) {
         const notifDoc = doc(collection(db, 'notifications', comment.uid, 'items'));
@@ -782,6 +992,66 @@ export default function App() {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `posts/${post.id}/comments/${comment.id}`);
+    }
+  };
+
+  // Muat komentar dan balasan yang pernah ditulis pengguna untuk halaman profil
+  const loadUserReplies = async (targetUid: string) => {
+    setLoadingReplies(true);
+    try {
+      const results: UserReplyItem[] = [];
+      const postsToCheck = posts.filter((p) => (p.commentsCount || 0) > 0);
+
+      await Promise.all(
+        postsToCheck.map(async (p) => {
+          let comments = p.comments;
+          if (!comments || !p.commentsLoaded) {
+            try {
+              const snap = await getDocs(
+                query(collection(db, 'posts', p.id, 'comments'), orderBy('createdAt', 'asc'))
+              );
+              comments = snap.docs.map((d) => ({ id: d.id, ...d.data() } as CommentItem));
+            } catch {
+              return;
+            }
+          }
+
+          for (const c of comments || []) {
+            if (c.uid === targetUid) {
+              results.push({
+                id: c.id,
+                postId: p.id,
+                postSnippet: p.content.slice(0, 80),
+                postTopic: p.topic,
+                content: c.content,
+                createdAt: c.createdAt,
+                isReply: false
+              });
+            }
+            for (const r of c.replies || []) {
+              if (r.uid === targetUid) {
+                results.push({
+                  id: r.id,
+                  postId: p.id,
+                  postSnippet: p.content.slice(0, 80),
+                  postTopic: p.topic,
+                  content: r.content,
+                  createdAt: r.createdAt,
+                  isReply: true,
+                  replyToName: c.authorName
+                });
+              }
+            }
+          }
+        })
+      );
+
+      results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setUserRepliesMap((prev) => ({ ...prev, [targetUid]: results }));
+    } catch {
+      // Soft fail
+    } finally {
+      setLoadingReplies(false);
     }
   };
 
@@ -920,10 +1190,259 @@ export default function App() {
     }
   };
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    window.location.hash = '#/home';
-    showToast('Kamu telah keluar.');
+  // Fitur Follow / Unfollow Pengguna
+  const handleToggleFollow = async (targetUser: UserProfile) => {
+    if (!firebaseUser || !userProfile || targetUser.uid === firebaseUser.uid) return;
+    const isFollowing = (userProfile.following || []).includes(targetUser.uid);
+    const updatedFollowing = isFollowing
+      ? (userProfile.following || []).filter((id) => id !== targetUser.uid)
+      : [...(userProfile.following || []), targetUser.uid];
+
+    setUserProfile((prev) => (prev ? { ...prev, following: updatedFollowing } : null));
+    setAllUsersList((prev) =>
+      prev.map((u) => (u.uid === userProfile.uid ? { ...u, following: updatedFollowing } : u))
+    );
+
+    try {
+      await updateDoc(doc(db, 'users', firebaseUser.uid), {
+        following: updatedFollowing
+      });
+
+      if (!isFollowing) {
+        const notifDoc = doc(collection(db, 'notifications', targetUser.uid, 'items'));
+        await setDoc(notifDoc, {
+          id: notifDoc.id,
+          toUid: targetUser.uid,
+          fromUid: firebaseUser.uid,
+          fromName: userProfile.displayName,
+          fromUsername: userProfile.username,
+          fromPhoto: userProfile.photoURL || '',
+          type: 'follow',
+          snippet: `${userProfile.displayName} mulai mengikuti profil kamu`,
+          read: false,
+          createdAt: Date.now()
+        });
+        showToast(`Mulai mengikuti ${targetUser.displayName}`);
+      } else {
+        showToast(`Batal mengikuti ${targetUser.displayName}`);
+      }
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${firebaseUser.uid}`);
+    }
+  };
+
+  // Fitur Edit Postingan (< 10 menit)
+  const startEditPost = (post: PostItem) => {
+    const isExpired = Date.now() - post.createdAt > 10 * 60 * 1000;
+    if (isExpired && !isUserAdmin) {
+      showToast('Batas waktu edit postingan (10 menit) telah lewat.');
+      return;
+    }
+    setEditingPost(post);
+    setEditPostContent(post.content);
+    setEditPostTopic(post.topic);
+    setEditPostLink(post.link || '');
+  };
+
+  const handleSaveEditPost = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingPost || !editPostContent.trim()) return;
+    const isExpired = Date.now() - editingPost.createdAt > 10 * 60 * 1000;
+    if (isExpired && !isUserAdmin) {
+      showToast('Batas waktu edit postingan (10 menit) telah lewat.');
+      setEditingPost(null);
+      return;
+    }
+
+    try {
+      const postRef = doc(db, 'posts', editingPost.id);
+      await updateDoc(postRef, {
+        content: editPostContent.trim(),
+        topic: editPostTopic,
+        link: editPostLink.trim() || null,
+        editedAt: Date.now()
+      });
+
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === editingPost.id
+            ? {
+                ...p,
+                content: editPostContent.trim(),
+                topic: editPostTopic,
+                link: editPostLink.trim() || undefined,
+                editedAt: Date.now()
+              }
+            : p
+        )
+      );
+
+      showToast('Postingan berhasil diperbarui.');
+      setEditingPost(null);
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `posts/${editingPost.id}`);
+    }
+  };
+
+  // Fitur Edit Pengumuman (< 10 menit)
+  const startEditAnn = (ann: AnnouncementItem) => {
+    const isExpired = Date.now() - ann.createdAt > 10 * 60 * 1000;
+    if (isExpired && !isUserAdmin) {
+      showToast('Batas waktu edit pengumuman (10 menit) telah lewat.');
+      return;
+    }
+    setEditingAnn(ann);
+    setEditAnnContent(ann.content);
+    setEditAnnCategory(ann.category);
+  };
+
+  const handleSaveEditAnn = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAnn || !editAnnContent.trim()) return;
+    const isExpired = Date.now() - editingAnn.createdAt > 10 * 60 * 1000;
+    if (isExpired && !isUserAdmin) {
+      showToast('Batas waktu edit pengumuman (10 menit) telah lewat.');
+      setEditingAnn(null);
+      return;
+    }
+
+    try {
+      const annRef = doc(db, 'announcements', editingAnn.id);
+      await updateDoc(annRef, {
+        content: editAnnContent.trim(),
+        category: editAnnCategory,
+        editedAt: Date.now()
+      });
+
+      setAnnouncements((prev) =>
+        prev.map((a) =>
+          a.id === editingAnn.id
+            ? {
+                ...a,
+                content: editAnnContent.trim(),
+                category: editAnnCategory,
+                editedAt: Date.now()
+              }
+            : a
+        )
+      );
+
+      showToast('Pengumuman berhasil diperbarui.');
+      setEditingAnn(null);
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `announcements/${editingAnn.id}`);
+    }
+  };
+
+  // Listen to members of currentClassId
+  useEffect(() => {
+    if (!firebaseUser || !currentClassId) return;
+    const membersCol = collection(db, 'kelas', currentClassId, 'members');
+    const unsub = onSnapshot(
+      membersCol,
+      (snap) => {
+        const list = snap.docs.map((d) => ({ uid: d.id, ...d.data() } as KelasMemberItem));
+        setClassMembers(list);
+      },
+      () => {
+        // Soft fail
+      }
+    );
+    return () => unsub();
+  }, [firebaseUser, currentClassId]);
+
+  // Listen to materi of currentClassId
+  useEffect(() => {
+    if (!firebaseUser || !currentClassId) return;
+    const materiCol = collection(db, 'kelas', currentClassId, 'materi');
+    const unsub = onSnapshot(
+      query(materiCol, orderBy('createdAt', 'desc')),
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as MateriItem));
+        setClassMateri(list);
+      },
+      () => {
+        // Soft fail
+      }
+    );
+    return () => unsub();
+  }, [firebaseUser, currentClassId]);
+
+  // Hak & Status Kelas
+  const isClassManager = isUserAdmin || userProfile?.pjClass === currentClassId;
+  const myClassMembership = classMembers.find((m) => m.uid === firebaseUser?.uid);
+  const isClassApproved = isClassManager || myClassMembership?.status === 'ok';
+  const isClassPending = !isClassManager && myClassMembership?.status === 'pending';
+
+  // Handler Kelas: Ajukan bergabung
+  const handleApplyJoinClass = async () => {
+    if (!firebaseUser || !userProfile) return;
+    setIsApplyingClass(true);
+    try {
+      const memRef = doc(db, 'kelas', currentClassId, 'members', firebaseUser.uid);
+      await setDoc(memRef, {
+        uid: firebaseUser.uid,
+        displayName: userProfile.displayName,
+        username: userProfile.username,
+        photoURL: userProfile.photoURL || '',
+        status: 'pending',
+        appliedAt: Date.now()
+      });
+      showToast('Permintaan bergabung telah dikirim ke PJ Kelas.');
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.CREATE, `kelas/${currentClassId}/members`);
+    } finally {
+      setIsApplyingClass(false);
+    }
+  };
+
+  // Handler Kelas: Batalkan ajuan
+  const handleCancelJoinClass = async () => {
+    if (!firebaseUser) return;
+    try {
+      const memRef = doc(db, 'kelas', currentClassId, 'members', firebaseUser.uid);
+      await deleteDoc(memRef);
+      showToast('Permintaan bergabung dibatalkan.');
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.DELETE, `kelas/${currentClassId}/members`);
+    }
+  };
+
+  // Handler Kelas: Acc Anggota
+  const handleApproveMember = async (memberUid: string) => {
+    try {
+      const memRef = doc(db, 'kelas', currentClassId, 'members', memberUid);
+      await updateDoc(memRef, {
+        status: 'ok',
+        updatedAt: Date.now()
+      });
+      showToast('Anggota disetujui bergabung ke kelas.');
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.UPDATE, `kelas/${currentClassId}/members`);
+    }
+  };
+
+  // Handler Kelas: Tolak Anggota
+  const handleRejectMember = async (memberUid: string) => {
+    try {
+      const memRef = doc(db, 'kelas', currentClassId, 'members', memberUid);
+      await deleteDoc(memRef);
+      showToast('Permintaan bergabung ditolak.');
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.DELETE, `kelas/${currentClassId}/members`);
+    }
+  };
+
+  // Handler Kelas: Keluarkan/Hapus Anggota
+  const handleKickMember = async (member: KelasMemberItem) => {
+    if (!confirm(`Keluarkan ${member.displayName} dari kelas ini?`)) return;
+    try {
+      const memRef = doc(db, 'kelas', currentClassId, 'members', member.uid);
+      await deleteDoc(memRef);
+      showToast(`${member.displayName} telah dikeluarkan dari kelas.`);
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.DELETE, `kelas/${currentClassId}/members`);
+    }
   };
 
   return (
@@ -1124,6 +1643,8 @@ export default function App() {
                               ? 'menyebut kamu di postingan/komentar'
                               : n.type === 'reply'
                               ? 'membalas komentarmu'
+                              : n.type === 'follow'
+                              ? 'mulai mengikuti akunmu'
                               : 'berkomentar di postinganmu'}
                           </div>
                           <div className="nx">{n.snippet || '(Foto atau tautan)'}</div>
@@ -1681,301 +2202,415 @@ export default function App() {
                   {announcements.length === 0 ? (
                     <p className="note">Belum ada pengumuman resmi.</p>
                   ) : (
-                    announcements.map((a) => (
-                      <div key={a.id} className="post ann">
-                        <div className="pt">
-                          <div className="av">{a.authorName.charAt(0).toUpperCase()}</div>
-                          <div>
-                            <b>{a.authorName}</b>
-                            <span className="adm">{a.authorRole}</span>
-                            <small>{new Date(a.createdAt).toLocaleDateString('id-ID')}</small>
+                    announcements.map((a) => {
+                      const canEditAnn =
+                        Date.now() - a.createdAt < 10 * 60 * 1000 &&
+                        (a.authorUid === firebaseUser.uid || isUserAdmin || hasModRight('ann'));
+
+                      return (
+                        <div key={a.id} className="post ann">
+                          <div className="pt">
+                            <div className="av">{a.authorName.charAt(0).toUpperCase()}</div>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                <b>{a.authorName}</b>
+                                {getUserRoleBadge(a.authorUid, a.authorRole)}
+                              </div>
+                              <small>
+                                {formatCommentDate(a.createdAt)}
+                                {a.editedAt ? ' • (diedit)' : ''}
+                              </small>
+                            </div>
+                            <span className="tag">{a.category}</span>
+                            {canEditAnn && (
+                              <button
+                                type="button"
+                                onClick={() => startEditAnn(a)}
+                                className="phb ic"
+                                style={{ fontSize: '12px', padding: '4px 10px', marginLeft: '6px' }}
+                                title="Edit pengumuman (Tersedia dalam 10 menit)"
+                              >
+                                <Ico name="pencil" size={13} />
+                                <span>Edit</span>
+                              </button>
+                            )}
                           </div>
-                          <span className="tag">{a.category}</span>
+                          <p>{a.content}</p>
                         </div>
-                        <p>{a.content}</p>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               ) : (
                 <div id="fd" className="feed">
-                  {posts
-                    .filter((p) => !p.classId && (topicFilter === 'Semua' || p.topic === topicFilter))
-                    .map((post) => {
-                      const hasLiked = post.likes?.includes(firebaseUser.uid);
-                      const isOwner = post.uid === firebaseUser.uid;
-                      const canDelete = isOwner || hasModRight('del');
-                      const canPin = hasModRight('pin');
+                  {(() => {
+                    const allMatching = posts.filter(
+                      (p) => !p.classId && (topicFilter === 'Semua' || p.topic === topicFilter)
+                    );
+                    const sortedPosts = [...allMatching].sort((a, b) => {
+                      const pinA = a.isPinned ? 1 : 0;
+                      const pinB = b.isPinned ? 1 : 0;
+                      if (pinA !== pinB) return pinB - pinA; // Pinned posts tampil teratas
+                      return (b.createdAt || 0) - (a.createdAt || 0);
+                    });
+                    const displayed = topicFilter === 'Semua' ? sortedPosts : sortedPosts.slice(0, 10);
+                    const hasMoreHidden = topicFilter !== 'Semua' && sortedPosts.length > 10;
 
-                      return (
-                        <div key={post.id} className={`post ${post.isPinned ? 'hl' : ''}`} data-pid={post.id}>
-                          <div className="pt">
-                            <button
-                              type="button"
-                              className="uc"
-                              onClick={() => {
-                                const targetUser = allUsersList.find((u) => u.uid === post.uid);
-                                if (targetUser) {
-                                  setViewedAccount(targetUser);
-                                  window.location.hash = `#/akun?u=${encodeURIComponent(targetUser.username)}`;
-                                }
-                              }}
-                            >
-                              <div className="av">
-                                {post.authorPhoto ? (
-                                  <img src={post.authorPhoto} alt="" />
-                                ) : (
-                                  post.authorName.charAt(0).toUpperCase()
-                                )}
-                              </div>
-                            </button>
+                    return (
+                      <>
+                        {displayed.map((post) => {
+                          const hasLiked = post.likes?.includes(firebaseUser.uid);
+                          const isOwner = post.uid === firebaseUser.uid;
+                          const canDelete = isOwner || hasModRight('del');
+                          const canPin = isUserAdmin || hasModRight('pin');
+                          const canEdit =
+                            Date.now() - post.createdAt < 10 * 60 * 1000 && (isOwner || isUserAdmin);
 
-                            <div>
-                              <button
-                                type="button"
-                                className="un"
-                                onClick={() => {
-                                  const targetUser = allUsersList.find((u) => u.uid === post.uid);
-                                  if (targetUser) {
-                                    setViewedAccount(targetUser);
-                                    window.location.hash = `#/akun?u=${encodeURIComponent(targetUser.username)}`;
-                                  }
-                                }}
-                              >
-                                {post.authorName}
-                              </button>
-                              {post.authorRole === 'Admin' && <span className="adm">Admin</span>}
-                              {post.authorRole === 'PJ Kelas' && <span className="adm">PJ</span>}
-                              <small>{formatCommentDate(post.createdAt)}</small>
-                            </div>
-
-                            <span className="tag">{post.topic}</span>
-                            {post.isPinned && (
-                              <span className="pinb">
-                                <Ico name="pin" size={14} /> Disematkan
-                              </span>
-                            )}
-                          </div>
-
-                          <p>
-                            {post.content.split(/(@[a-z0-9_.]{3,20})/gi).map((part, idx) => {
-                              if (part.startsWith('@')) {
-                                return (
-                                  <span key={idx} style={{ color: 'var(--sky-d)', fontWeight: 700 }}>
-                                    {part}
-                                  </span>
-                                );
-                              }
-                              return part;
-                            })}
-                          </p>
-
-                          {post.imageBase64 && (
-                            <img className="ph" src={post.imageBase64} alt="Foto postingan" />
-                          )}
-
-                          {post.link && (
-                            <a className="lkc" href={post.link} target="_blank" rel="noopener noreferrer">
-                              <span>
-                                <Ico name="link" size={16} />
-                                {post.link.replace(/^https?:\/\//, '')}
-                              </span>
-                            </a>
-                          )}
-
-                          <div className="acts">
-                            <button
-                              type="button"
-                              className={`lk ${hasLiked ? 'on' : ''}`}
-                              onClick={() => handleToggleLike(post)}
-                              aria-label="Suka"
-                              aria-pressed={hasLiked}
-                            >
-                              <Ico name="heart" />
-                              <span>{post.likesCount || 0}</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              className={post.commentsOpen ? 'on' : ''}
-                              onClick={() => toggleComments(post)}
-                              aria-label="Komentar"
-                              aria-expanded={post.commentsOpen}
-                            >
-                              <Ico name="msg" />
-                              <span>{post.commentsCount || 0}</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const url = `${window.location.origin}/#/home?p=${post.id}`;
-                                navigator.clipboard.writeText(url);
-                                showToast('Link postingan disalin');
-                              }}
-                              aria-label="Bagikan link postingan"
-                            >
-                              <Ico name="link" />
-                            </button>
-
-                            {canPin && (
-                              <button
-                                type="button"
-                                className={post.isPinned ? 'on' : ''}
-                                onClick={() => handleTogglePin(post)}
-                                aria-label={post.isPinned ? 'Lepas sematan' : 'Sematkan postingan'}
-                              >
-                                <Ico name="pin" />
-                              </button>
-                            )}
-
-                            {canDelete ? (
-                              <button
-                                type="button"
-                                className="rt"
-                                onClick={() => handleDeletePost(post)}
-                                aria-label="Hapus postingan"
-                              >
-                                <Ico name="trash" />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                className="rt"
-                                onClick={() => handleReportPost(post)}
-                                aria-label="Laporkan postingan"
-                              >
-                                <Ico name="alert" />
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Comments Section */}
-                          {post.commentsOpen && (
-                            <div className="cms">
-                              {(post.comments || []).map((c) => (
-                                <div key={c.id}>
-                                  <div className="cm">
-                                    <div className="av">
-                                      {c.authorPhoto ? (
-                                        <img src={c.authorPhoto} alt="" />
-                                      ) : (
-                                        c.authorName.charAt(0).toUpperCase()
-                                      )}
-                                    </div>
-                                    <div className="t">
-                                      <b>{c.authorName}</b>
-                                      <small>{formatCommentDate(c.createdAt)}</small>
-                                      <div>{c.content}</div>
-
-                                      <div className="ca">
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setPosts((prev) =>
-                                              prev.map((p) =>
-                                                p.id === post.id
-                                                  ? {
-                                                      ...p,
-                                                      comments: (p.comments || []).map((cm) =>
-                                                        cm.id === c.id
-                                                          ? { ...cm, replyOpen: !cm.replyOpen, replyPrefix: `@${c.authorUsername} ` }
-                                                          : cm
-                                                      )
-                                                    }
-                                                  : p
-                                              )
-                                            );
-                                          }}
-                                        >
-                                          Balas
-                                        </button>
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  {(c.replies || []).length > 0 && (
-                                    <div className="rps">
-                                      {c.replies?.map((r) => (
-                                        <div key={r.id} className="cm">
-                                          <div className="av">
-                                            {r.authorPhoto ? <img src={r.authorPhoto} alt="" /> : r.authorName.charAt(0).toUpperCase()}
-                                          </div>
-                                          <div className="t">
-                                            <b>{r.authorName}</b>
-                                            <small>{formatCommentDate(r.createdAt)}</small>
-                                            <div>{r.content}</div>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-
-                                  {c.replyOpen && (
-                                    <div className="rps">
-                                      <div className="cin">
-                                        <input
-                                          defaultValue={c.replyPrefix || ''}
-                                          placeholder="Tulis balasan..."
-                                          aria-label="Balasan"
-                                          onKeyDown={(e) => {
-                                            if (e.key === 'Enter') {
-                                              const target = e.currentTarget;
-                                              handleAddReply(post, c, target.value);
-                                              target.value = '';
-                                            }
-                                          }}
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            const inp = e.currentTarget.previousElementSibling as HTMLInputElement;
-                                            if (inp) {
-                                              handleAddReply(post, c, inp.value);
-                                              inp.value = '';
-                                            }
-                                          }}
-                                        >
-                                          Kirim
-                                        </button>
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-
-                              <div className="cin">
-                                <input
-                                  placeholder="Tulis komentar..."
-                                  aria-label="Komentar"
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      const target = e.currentTarget;
-                                      handleAddComment(post, target.value);
-                                      target.value = '';
-                                    }
-                                  }}
-                                />
+                          return (
+                            <div key={post.id} className={`post ${post.isPinned ? 'hl' : ''}`} data-pid={post.id}>
+                              <div className="pt">
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    const inp = e.currentTarget.previousElementSibling as HTMLInputElement;
-                                    if (inp) {
-                                      handleAddComment(post, inp.value);
-                                      inp.value = '';
+                                  className="uc"
+                                  onClick={() => {
+                                    const targetUser = allUsersList.find((u) => u.uid === post.uid);
+                                    if (targetUser) {
+                                      setViewedAccount(targetUser);
+                                      window.location.hash = `#/akun?u=${encodeURIComponent(targetUser.username)}`;
                                     }
                                   }}
                                 >
-                                  Kirim
+                                  <div className="av">
+                                    {post.authorPhoto ? (
+                                      <img src={post.authorPhoto} alt="" />
+                                    ) : (
+                                      post.authorName.charAt(0).toUpperCase()
+                                    )}
+                                  </div>
                                 </button>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
 
-                  {hasMorePosts && (
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                    <button
+                                      type="button"
+                                      className="un"
+                                      onClick={() => {
+                                        const targetUser = allUsersList.find((u) => u.uid === post.uid);
+                                        if (targetUser) {
+                                          setViewedAccount(targetUser);
+                                          window.location.hash = `#/akun?u=${encodeURIComponent(targetUser.username)}`;
+                                        }
+                                      }}
+                                    >
+                                      {post.authorName}
+                                    </button>
+                                    {getUserRoleBadge(post.uid, post.authorRole, post.authorPjClass)}
+                                  </div>
+                                  <small>
+                                    {formatCommentDate(post.createdAt)}
+                                    {post.editedAt ? ' • (diedit)' : ''}
+                                  </small>
+                                </div>
+
+                                <span className="tag">{post.topic}</span>
+                                {post.isPinned && (
+                                  <span className="pinb">
+                                    <Ico name="pin" size={14} /> Disematkan
+                                  </span>
+                                )}
+                              </div>
+
+                              <p>
+                                {post.content.split(/(@[a-z0-9_.]{3,20})/gi).map((part, idx) => {
+                                  if (part.startsWith('@')) {
+                                    return (
+                                      <span key={idx} style={{ color: 'var(--sky-d)', fontWeight: 700 }}>
+                                        {part}
+                                      </span>
+                                    );
+                                  }
+                                  return part;
+                                })}
+                              </p>
+
+                              {post.imageBase64 && (
+                                <img className="ph" src={post.imageBase64} alt="Foto postingan" />
+                              )}
+
+                              {post.pdfBase64 && (
+                                <a
+                                  className="pdf-badge"
+                                  href={post.pdfBase64}
+                                  download={post.pdfName || 'dokumen.pdf'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div
+                                      style={{
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '8px',
+                                        background: '#FEE2E2',
+                                        color: '#DC2626',
+                                        display: 'grid',
+                                        placeItems: 'center',
+                                        fontWeight: 800,
+                                        fontSize: '11px',
+                                        flexShrink: 0
+                                      }}
+                                    >
+                                      PDF
+                                    </div>
+                                    <div>
+                                      <b style={{ fontSize: '14px', display: 'block', wordBreak: 'break-all' }}>
+                                        {post.pdfName || 'Dokumen PDF'}
+                                      </b>
+                                      <small style={{ color: 'var(--ink2)' }}>Klik untuk unduh / baca dokumen</small>
+                                    </div>
+                                  </div>
+                                  <Ico name="link" size={16} />
+                                </a>
+                              )}
+
+                              {post.link && (
+                                <a className="lkc" href={post.link} target="_blank" rel="noopener noreferrer">
+                                  <span>
+                                    <Ico name="link" size={16} />
+                                    {post.link.replace(/^https?:\/\//, '')}
+                                  </span>
+                                </a>
+                              )}
+
+                              <div className="acts">
+                                <button
+                                  type="button"
+                                  className={`lk ${hasLiked ? 'on' : ''}`}
+                                  onClick={() => handleToggleLike(post)}
+                                  aria-label="Suka"
+                                  aria-pressed={hasLiked}
+                                >
+                                  <Ico name="heart" />
+                                  <span>{post.likesCount || 0}</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className={post.commentsOpen ? 'on' : ''}
+                                  onClick={() => toggleComments(post)}
+                                  aria-label="Komentar"
+                                  aria-expanded={post.commentsOpen}
+                                >
+                                  <Ico name="msg" />
+                                  <span>{post.commentsCount || 0}</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const url = `${window.location.origin}/#/home?p=${post.id}`;
+                                    navigator.clipboard.writeText(url);
+                                    showToast('Link postingan disalin');
+                                  }}
+                                  aria-label="Bagikan link postingan"
+                                >
+                                  <Ico name="link" />
+                                </button>
+
+                                {canPin && (
+                                  <button
+                                    type="button"
+                                    className={post.isPinned ? 'on' : ''}
+                                    onClick={() => handleTogglePin(post)}
+                                    aria-label={post.isPinned ? 'Lepas sematan' : 'Sematkan postingan'}
+                                  >
+                                    <Ico name="pin" />
+                                  </button>
+                                )}
+
+                                {canEdit && (
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditPost(post)}
+                                    aria-label="Edit postingan"
+                                    title="Edit postingan (Tersedia dalam 10 menit)"
+                                  >
+                                    <Ico name="pencil" />
+                                  </button>
+                                )}
+
+                                {canDelete ? (
+                                  <button
+                                    type="button"
+                                    className="rt"
+                                    onClick={() => handleDeletePost(post)}
+                                    aria-label="Hapus postingan"
+                                  >
+                                    <Ico name="trash" />
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="rt"
+                                    onClick={() => handleReportPost(post)}
+                                    aria-label="Laporkan postingan"
+                                  >
+                                    <Ico name="alert" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Comments Section */}
+                              {post.commentsOpen && (
+                                <div className="cms">
+                                  {(post.comments || []).map((c) => (
+                                    <div key={c.id}>
+                                      <div className="cm">
+                                        <div className="av">
+                                          {c.authorPhoto ? (
+                                            <img src={c.authorPhoto} alt="" />
+                                          ) : (
+                                            c.authorName.charAt(0).toUpperCase()
+                                          )}
+                                        </div>
+                                        <div className="t">
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                            <b>{c.authorName}</b>
+                                            {getUserRoleBadge(c.uid)}
+                                          </div>
+                                          <small>{formatCommentDate(c.createdAt)}</small>
+                                          <div>{c.content}</div>
+
+                                          <div className="ca">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setPosts((prev) =>
+                                                  prev.map((p) =>
+                                                    p.id === post.id
+                                                      ? {
+                                                          ...p,
+                                                          comments: (p.comments || []).map((cm) =>
+                                                            cm.id === c.id
+                                                              ? { ...cm, replyOpen: !cm.replyOpen, replyPrefix: `@${c.authorUsername} ` }
+                                                              : cm
+                                                          )
+                                                        }
+                                                      : p
+                                                  )
+                                                );
+                                              }}
+                                            >
+                                              Balas
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {(c.replies || []).length > 0 && (
+                                        <div className="rps">
+                                          {c.replies?.map((r) => (
+                                            <div key={r.id} className="cm">
+                                              <div className="av">
+                                                {r.authorPhoto ? <img src={r.authorPhoto} alt="" /> : r.authorName.charAt(0).toUpperCase()}
+                                              </div>
+                                              <div className="t">
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                                  <b>{r.authorName}</b>
+                                                  {getUserRoleBadge(r.uid)}
+                                                </div>
+                                                <small>{formatCommentDate(r.createdAt)}</small>
+                                                <div>{r.content}</div>
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {c.replyOpen && (
+                                        <div className="rps">
+                                          <div className="cin">
+                                            <input
+                                              defaultValue={c.replyPrefix || ''}
+                                              placeholder="Tulis balasan..."
+                                              aria-label="Balasan"
+                                              onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                  const target = e.currentTarget;
+                                                  handleAddReply(post, c, target.value);
+                                                  target.value = '';
+                                                }
+                                              }}
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                const inp = e.currentTarget.previousElementSibling as HTMLInputElement;
+                                                if (inp) {
+                                                  handleAddReply(post, c, inp.value);
+                                                  inp.value = '';
+                                                }
+                                              }}
+                                            >
+                                              Kirim
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+
+                                  <div className="cin">
+                                    <input
+                                      placeholder="Tulis komentar..."
+                                      aria-label="Komentar"
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          const target = e.currentTarget;
+                                          handleAddComment(post, target.value);
+                                          target.value = '';
+                                        }
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        const inp = e.currentTarget.previousElementSibling as HTMLInputElement;
+                                        if (inp) {
+                                          handleAddComment(post, inp.value);
+                                          inp.value = '';
+                                        }
+                                      }}
+                                    >
+                                      Kirim
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {hasMoreHidden && (
+                          <div style={{ textAlign: 'center', padding: '16px', background: 'var(--card)', borderRadius: '16px', border: '1.5px solid var(--line)', marginTop: '14px' }}>
+                            <p style={{ fontSize: '14px', color: 'var(--ink2)', marginBottom: '8px' }}>
+                              Menampilkan 10 postingan teratas untuk topik "{topicFilter}".
+                            </p>
+                            <button
+                              type="button"
+                              className="pill"
+                              onClick={() => setTopicFilter('Semua')}
+                              style={{ fontSize: '13px', padding: '7px 18px' }}
+                            >
+                              Tampilkan Semua Postingan
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+
+                  {hasMorePosts && topicFilter === 'Semua' && (
                     <div style={{ textAlign: 'center', marginTop: '16px' }}>
                       <button
                         className="pill o"
@@ -2003,11 +2638,14 @@ export default function App() {
                 <div className="cmp" id="acmp" style={{ marginBottom: '20px' }}>
                   <textarea
                     id="at"
-                    rows={2}
-                    placeholder="Tulis pengumuman (khusus admin dan moderator)"
+                    ref={annInputRef}
+                    placeholder="Tulis pengumuman resmi... (Mendukung paragraf, poin teks, rincian info)"
                     aria-label="Tulis pengumuman"
                     value={annText}
-                    onChange={(e) => setAnnText(e.target.value)}
+                    onChange={(e) => {
+                      setAnnText(e.target.value);
+                      autoResizeTextarea(e.target);
+                    }}
                   />
                   <div className="bt">
                     <select id="ac" aria-label="Kategori" value={annCategory} onChange={(e) => setAnnCategory(e.target.value)}>
@@ -2035,6 +2673,7 @@ export default function App() {
                             createdAt: Date.now()
                           });
                           setAnnText('');
+                          if (annInputRef.current) annInputRef.current.style.height = 'auto';
                           showToast('Pengumuman diterbitkan');
                         } catch (error) {
                           handleFirestoreError(error, OperationType.CREATE, 'announcements');
@@ -2153,190 +2792,664 @@ export default function App() {
                 Belajar dasar materi lewat 3 pertemuan webinar.
               </p>
 
-              <div className="ptb">
-                <div className="ptabs" role="group" aria-label="Isi kelas">
-                  <button
-                    type="button"
-                    className={classTab === 'posts' ? 'on' : ''}
-                    onClick={() => setClassTab('posts')}
-                    aria-pressed={classTab === 'posts'}
-                  >
-                    Postingan kelas
-                  </button>
-                  <button
-                    type="button"
-                    className={classTab === 'materi' ? 'on' : ''}
-                    onClick={() => setClassTab('materi')}
-                    aria-pressed={classTab === 'materi'}
-                  >
-                    Materi
-                  </button>
-                  {hasPjRight(currentClassId, 'acc') && (
-                    <button
-                      type="button"
-                      className={classTab === 'peserta' ? 'on' : ''}
-                      onClick={() => setClassTab('peserta')}
-                      aria-pressed={classTab === 'peserta'}
-                    >
-                      Kelola
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              <div className="pline" style={{ marginTop: '0' }} />
-
-              {/* Class Posts */}
-              {classTab === 'posts' && (
+              {!isClassApproved ? (
                 <div>
-                  <div className="cmp" style={{ marginBottom: '16px' }}>
-                    <textarea
-                      rows={2}
-                      placeholder="Bagikan sesuatu untuk teman sekelas. Ketik @ untuk mention"
-                      value={postText}
-                      onChange={(e) => handleComposerInput(e.target.value)}
-                    />
-                    <div className="bt">
-                      <button
-                        className="pill"
-                        type="button"
-                        style={{ marginLeft: 'auto' }}
-                        onClick={() => handleCreatePost(currentClassId)}
-                      >
-                        Posting
+                  {isClassPending ? (
+                    <div style={{ background: 'var(--card)', border: '2px solid var(--ink)', borderRadius: '20px', padding: '26px', textAlign: 'center', marginTop: '16px', boxShadow: '6px 6px 0 var(--sh)' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>⏳</div>
+                      <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>Pengajuan Menunggu Persetujuan</h3>
+                      <p style={{ color: 'var(--ink2)', margin: '8px auto 16px', maxWidth: '420px', lineHeight: 1.5, fontSize: '14px' }}>
+                        Permintaanmu untuk bergabung ke kelas ini telah terkirim. PJ Kelas atau Admin akan meninjau dan menyetujui pengajuanmu.
+                      </p>
+                      <button type="button" className="pill o" onClick={handleCancelJoinClass}>
+                        Batalkan Pengajuan
                       </button>
                     </div>
-                  </div>
-
-                  <div className="feed" id="kfeed">
-                    {posts
-                      .filter((p) => p.classId === currentClassId)
-                      .map((p) => (
-                        <div key={p.id} className="post">
-                          <div className="pt">
-                            <div className="av">{p.authorName.charAt(0).toUpperCase()}</div>
-                            <div>
-                              <b>{p.authorName}</b>
-                              {p.isPj && <span className="adm">PJ</span>}
-                              <small>{new Date(p.createdAt).toLocaleDateString('id-ID')}</small>
-                            </div>
-                          </div>
-                          <p>{p.content}</p>
-                          {(p.uid === firebaseUser?.uid || hasPjRight(currentClassId, 'del')) && (
-                            <div className="acts">
-                              <button
-                                type="button"
-                                className="rt"
-                                onClick={() => handleDeletePost(p)}
-                                aria-label="Hapus"
-                              >
-                                <Ico name="trash" />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                  </div>
+                  ) : (
+                    <div style={{ background: 'var(--card)', border: '2px solid var(--ink)', borderRadius: '20px', padding: '26px', textAlign: 'center', marginTop: '16px', boxShadow: '6px 6px 0 var(--sh)' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>🔒</div>
+                      <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>Kelas Terbatas untuk Anggota</h3>
+                      <p style={{ color: 'var(--ink2)', margin: '8px auto 18px', maxWidth: '440px', lineHeight: 1.5, fontSize: '14px' }}>
+                        Untuk menjaga ketertiban diskusi dan webinar belajar, kamu harus mengajukan bergabung terlebih dahulu sebelum dapat mengakses postingan, materi, dan forum kelas ini.
+                      </p>
+                      <button
+                        type="button"
+                        className="pill"
+                        onClick={handleApplyJoinClass}
+                        disabled={isApplyingClass}
+                        style={{ padding: '12px 24px' }}
+                      >
+                        {isApplyingClass ? 'Mengirim Pengajuan...' : 'Ajukan Bergabung ke Kelas Ini'}
+                      </button>
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {/* Class Materi */}
-              {classTab === 'materi' && (
-                <div>
-                  {hasPjRight(currentClassId, 'mat') && (
-                    <div className="cmp" style={{ marginBottom: '16px' }}>
-                      <input
-                        className="kin"
-                        placeholder="Judul materi"
-                        value={materiTitle}
-                        onChange={(e) => setMateriTitle(e.target.value)}
-                      />
-                      <input
-                        className="kin"
-                        placeholder="Keterangan"
-                        value={materiDesc}
-                        onChange={(e) => setMateriDesc(e.target.value)}
-                      />
-                      <input
-                        className="kin"
-                        type="url"
-                        placeholder="Tautan materi (opsional, https://...)"
-                        value={materiLink}
-                        onChange={(e) => setMateriLink(e.target.value)}
-                      />
-                      <div className="bt">
+              ) : (
+                <>
+                  <div className="ptb">
+                    <div className="ptabs" role="group" aria-label="Isi kelas">
+                      <button
+                        type="button"
+                        className={classTab === 'posts' ? 'on' : ''}
+                        onClick={() => setClassTab('posts')}
+                        aria-pressed={classTab === 'posts'}
+                      >
+                        Postingan kelas
+                      </button>
+                      <button
+                        type="button"
+                        className={classTab === 'materi' ? 'on' : ''}
+                        onClick={() => setClassTab('materi')}
+                        aria-pressed={classTab === 'materi'}
+                      >
+                        Materi
+                      </button>
+                      {isClassManager && (
                         <button
-                          className="pill"
                           type="button"
-                          style={{ marginLeft: 'auto' }}
-                          onClick={() => {
-                            if (!materiTitle.trim()) return;
-                            const newMateri: MateriItem = {
-                              id: Date.now().toString(),
-                              title: materiTitle.trim(),
-                              description: materiDesc.trim(),
-                              link: materiLink.trim(),
-                              createdAt: Date.now()
-                            };
-                            setClassMateri((prev) => [...prev, newMateri]);
-                            setMateriTitle('');
-                            setMateriDesc('');
-                            setMateriLink('');
-                            showToast('Materi ditambahkan');
-                          }}
+                          className={classTab === 'peserta' ? 'on' : ''}
+                          onClick={() => setClassTab('peserta')}
+                          aria-pressed={classTab === 'peserta'}
                         >
-                          Tambah materi
+                          Kelola Peserta {classMembers.filter(m => m.status === 'pending').length > 0 && `(${classMembers.filter(m => m.status === 'pending').length})`}
                         </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pline" style={{ marginTop: '0' }} />
+
+                  {/* Class Posts */}
+                  {classTab === 'posts' && (
+                    <div>
+                      <div className="cmp" style={{ marginBottom: '16px' }}>
+                        <textarea
+                          ref={classPostInputRef}
+                          placeholder="Bagikan sesuatu untuk teman sekelas... (Mendukung paragraf, poin teks, media foto & PDF)"
+                          value={classPostText}
+                          onChange={(e) => {
+                            setClassPostText(e.target.value);
+                            autoResizeTextarea(e.target);
+                          }}
+                        />
+
+                        {/* Preview Media di Komposer Kelas */}
+                        {classPostMedia && (
+                          <div style={{ margin: '8px 0' }}>
+                            {classPostMedia.type === 'image' ? (
+                              <div className="pvw">
+                                <img src={classPostMedia.base64} alt="Pratinjau foto" />
+                                <button type="button" onClick={() => setClassPostMedia(null)} aria-label="Hapus foto">
+                                  &times;
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="file-preview-card">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                  <div
+                                    style={{
+                                      width: '28px',
+                                      height: '28px',
+                                      borderRadius: '6px',
+                                      background: '#FEE2E2',
+                                      color: '#DC2626',
+                                      display: 'grid',
+                                      placeItems: 'center',
+                                      fontWeight: 800,
+                                      fontSize: '10px',
+                                      flexShrink: 0
+                                    }}
+                                  >
+                                    PDF
+                                  </div>
+                                  <span
+                                    style={{
+                                      fontSize: '13px',
+                                      fontWeight: 600,
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                  >
+                                    {classPostMedia.name}
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="phb"
+                                  onClick={() => setClassPostMedia(null)}
+                                  style={{ padding: '2px 8px', fontSize: '12px' }}
+                                >
+                                  Hapus
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        <div className="bt">
+                          <button
+                            className="phb ic"
+                            type="button"
+                            onClick={() => classFileInputRef.current?.click()}
+                            title="Lampirkan Media (Foto / PDF)"
+                          >
+                            <Ico name="plus" size={15} />
+                            <span style={{ fontSize: '13px', fontWeight: 600 }}>Media (Foto/PDF)</span>
+                          </button>
+                          <input
+                            ref={classFileInputRef}
+                            type="file"
+                            accept="image/*,application/pdf"
+                            hidden
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              try {
+                                showToast('Memproses file...');
+                                const res = await readFileAsBase64(file);
+                                setClassPostMedia({ name: res.name, type: res.type, base64: res.base64 });
+                                showToast(`${res.type === 'pdf' ? 'Dokumen PDF' : 'Foto'} siap diunggah.`);
+                              } catch (err: any) {
+                                showToast(err.message || 'Gagal memproses file');
+                              }
+                              e.target.value = '';
+                            }}
+                          />
+
+                          <button
+                            className="pill"
+                            type="button"
+                            style={{ marginLeft: 'auto' }}
+                            onClick={() => handleCreatePost(currentClassId)}
+                          >
+                            Posting
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="feed" id="kfeed">
+                        {(() => {
+                          const classMatching = posts.filter((p) => p.classId === currentClassId);
+                          const sortedClassPosts = [...classMatching].sort((a, b) => {
+                            const pinA = a.isPinned ? 1 : 0;
+                            const pinB = b.isPinned ? 1 : 0;
+                            if (pinA !== pinB) return pinB - pinA; // Pinned posts tampil teratas
+                            return (b.createdAt || 0) - (a.createdAt || 0);
+                          });
+
+                          if (sortedClassPosts.length === 0) {
+                            return <p className="note">Belum ada postingan di kelas ini. Jadilah yang pertama berbagi!</p>;
+                          }
+
+                          return sortedClassPosts.map((p) => {
+                            const canPin = isUserAdmin || hasPjRight(currentClassId, 'pin');
+                            const canDel = p.uid === firebaseUser?.uid || hasPjRight(currentClassId, 'del');
+
+                            return (
+                              <div key={p.id} className={`post ${p.isPinned ? 'hl' : ''}`}>
+                                <div className="pt">
+                                  <div className="av">{p.authorName.charAt(0).toUpperCase()}</div>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                      <b>{p.authorName}</b>
+                                      {getUserRoleBadge(p.uid, p.authorRole, p.authorPjClass)}
+                                    </div>
+                                    <small>{formatCommentDate(p.createdAt)}</small>
+                                  </div>
+                                  {p.isPinned && (
+                                    <span className="pinb">
+                                      <Ico name="pin" size={14} /> Disematkan
+                                    </span>
+                                  )}
+                                </div>
+                                <p>{p.content}</p>
+
+                                {p.imageBase64 && (
+                                  <img className="ph" src={p.imageBase64} alt="Media postingan kelas" />
+                                )}
+
+                                {p.pdfBase64 && (
+                                  <a
+                                    className="pdf-badge"
+                                    href={p.pdfBase64}
+                                    download={p.pdfName || 'dokumen.pdf'}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                      <div
+                                        style={{
+                                          width: '36px',
+                                          height: '36px',
+                                          borderRadius: '8px',
+                                          background: '#FEE2E2',
+                                          color: '#DC2626',
+                                          display: 'grid',
+                                          placeItems: 'center',
+                                          fontWeight: 800,
+                                          fontSize: '11px',
+                                          flexShrink: 0
+                                        }}
+                                      >
+                                        PDF
+                                      </div>
+                                      <div>
+                                        <b style={{ fontSize: '14px', display: 'block', wordBreak: 'break-all' }}>
+                                          {p.pdfName || 'Dokumen PDF'}
+                                        </b>
+                                        <small style={{ color: 'var(--ink2)' }}>Klik untuk unduh / buka dokumen</small>
+                                      </div>
+                                    </div>
+                                    <Ico name="link" size={16} />
+                                  </a>
+                                )}
+
+                                <div className="acts">
+                                  {canPin && (
+                                    <button
+                                      type="button"
+                                      className={p.isPinned ? 'on' : ''}
+                                      onClick={() => handleTogglePin(p)}
+                                      aria-label={p.isPinned ? 'Lepas sematan' : 'Sematkan postingan'}
+                                      title={p.isPinned ? 'Lepas sematan' : 'Sematkan postingan (maks 3)'}
+                                    >
+                                      <Ico name="pin" />
+                                      <span>{p.isPinned ? 'Disematkan' : 'Sematkan'}</span>
+                                    </button>
+                                  )}
+
+                                  {canDel && (
+                                    <button
+                                      type="button"
+                                      className="rt"
+                                      onClick={() => handleDeletePost(p)}
+                                      aria-label="Hapus"
+                                      title="Hapus postingan"
+                                    >
+                                      <Ico name="trash" />
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          });
+                        })()}
                       </div>
                     </div>
                   )}
 
-                  <div className="panel2" style={{ marginTop: '12px' }}>
-                    {[
-                      { title: 'Pertemuan 1', desc: 'Pengantar dan dasar materi' },
-                      { title: 'Pertemuan 2', desc: 'Praktik dan studi kasus' },
-                      { title: 'Pertemuan 3', desc: 'Studi kasus dan evaluasi' }
-                    ].map((m, i) => (
-                      <div key={i} className="k">
-                        <div>
-                          {m.title}
-                          <small>{m.desc}</small>
-                        </div>
-                        <div className="kact">
-                          <button className="phb" type="button" onClick={() => showToast('Materi dibuka')}>
-                            Buka
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                  {/* Class Materi */}
+                  {classTab === 'materi' && (
+                    <div>
+                      {hasPjRight(currentClassId, 'mat') && (
+                        <div className="cmp" style={{ marginBottom: '16px' }}>
+                          <h4 style={{ fontWeight: 800, fontSize: '15px', marginBottom: '8px' }}>
+                            Tambah Materi Kelas (Khusus PJ & Admin)
+                          </h4>
+                          <input
+                            className="kin"
+                            style={{ width: '100%', marginBottom: '8px', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '10px 14px' }}
+                            placeholder="Judul materi pembelajaran..."
+                            value={materiTitle}
+                            onChange={(e) => setMateriTitle(e.target.value)}
+                          />
+                          <textarea
+                            style={{ width: '100%', minHeight: '80px', marginBottom: '8px', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '10px 14px', font: 'inherit', fontSize: '14px', resize: 'none' }}
+                            placeholder="Keterangan materi (mendukung ringkasan, poin-poin penjelasan, tugas)..."
+                            value={materiDesc}
+                            onChange={(e) => {
+                              setMateriDesc(e.target.value);
+                              autoResizeTextarea(e.target);
+                            }}
+                          />
+                          <input
+                            className="kin"
+                            type="url"
+                            style={{ width: '100%', marginBottom: '8px', border: '1.5px solid var(--line)', borderRadius: '10px', padding: '10px 14px' }}
+                            placeholder="Tautan materi / Google Drive / Modul (opsional, https://...)"
+                            value={materiLink}
+                            onChange={(e) => setMateriLink(e.target.value)}
+                          />
 
-              {/* Class Management */}
-              {classTab === 'peserta' && (
-                <div className="panel2">
-                  <h3 className="sech">Peserta</h3>
-                  {allUsersList.slice(0, 5).map((u) => (
-                    <div key={u.uid} className="k">
-                      <div>
-                        {u.displayName}
-                        <small>@{u.username}</small>
-                      </div>
-                      <div className="kact">
-                        {hasPjRight(currentClassId, 'kick') && (
-                          <button
-                            className="phb"
-                            type="button"
-                            onClick={() => showToast(`${u.displayName} dikeluarkan dari kelas`)}
-                          >
-                            Keluarkan
-                          </button>
+                          {/* Media Preview in Materi */}
+                          {materiMedia && (
+                            <div style={{ margin: '8px 0' }}>
+                              {materiMedia.type === 'image' ? (
+                                <div className="pvw">
+                                  <img src={materiMedia.base64} alt="Pratinjau foto materi" />
+                                  <button type="button" onClick={() => setMateriMedia(null)} aria-label="Hapus foto">
+                                    &times;
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="file-preview-card">
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                    <div
+                                      style={{
+                                        width: '28px',
+                                        height: '28px',
+                                        borderRadius: '6px',
+                                        background: '#FEE2E2',
+                                        color: '#DC2626',
+                                        display: 'grid',
+                                        placeItems: 'center',
+                                        fontWeight: 800,
+                                        fontSize: '10px',
+                                        flexShrink: 0
+                                      }}
+                                    >
+                                      PDF
+                                    </div>
+                                    <span
+                                      style={{
+                                        fontSize: '13px',
+                                        fontWeight: 600,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      {materiMedia.name}
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    className="phb"
+                                    onClick={() => setMateriMedia(null)}
+                                    style={{ padding: '2px 8px', fontSize: '12px' }}
+                                  >
+                                    Hapus
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="bt">
+                            <button
+                              className="phb ic"
+                              type="button"
+                              onClick={() => materiFileInputRef.current?.click()}
+                              title="Lampirkan Media Foto atau PDF"
+                            >
+                              <Ico name="plus" size={15} />
+                              <span style={{ fontSize: '13px', fontWeight: 600 }}>Media (Foto/PDF)</span>
+                            </button>
+                            <input
+                              ref={materiFileInputRef}
+                              type="file"
+                              accept="image/*,application/pdf"
+                              hidden
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                try {
+                                  showToast('Memproses media materi...');
+                                  const res = await readFileAsBase64(file);
+                                  setMateriMedia({ name: res.name, type: res.type, base64: res.base64 });
+                                  showToast(`${res.type === 'pdf' ? 'Dokumen PDF' : 'Foto'} siap dilampirkan.`);
+                                } catch (err: any) {
+                                  showToast(err.message || 'Gagal membaca file');
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+
+                            <button
+                              className="pill"
+                              type="button"
+                              style={{ marginLeft: 'auto' }}
+                              onClick={async () => {
+                                if (!materiTitle.trim() || !firebaseUser || !userProfile) return;
+                                try {
+                                  const newMateriDoc = doc(collection(db, 'kelas', currentClassId, 'materi'));
+                                  const newMateri: MateriItem = {
+                                    id: newMateriDoc.id,
+                                    title: materiTitle.trim(),
+                                    description: materiDesc.trim(),
+                                    link: materiLink.trim() || undefined,
+                                    mediaBase64: materiMedia?.base64,
+                                    mediaType: materiMedia?.type,
+                                    mediaName: materiMedia?.name,
+                                    createdAt: Date.now(),
+                                    createdBy: userProfile.displayName
+                                  };
+                                  await setDoc(newMateriDoc, newMateri);
+                                  setMateriTitle('');
+                                  setMateriDesc('');
+                                  setMateriLink('');
+                                  setMateriMedia(null);
+                                  showToast('Materi berhasil diunggah.');
+                                } catch (err: any) {
+                                  handleFirestoreError(err, OperationType.CREATE, `kelas/${currentClassId}/materi`);
+                                }
+                              }}
+                            >
+                              Simpan Materi
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Daftar Materi Pembelajaran */}
+                      <div className="panel2" style={{ marginTop: '12px' }}>
+                        <h4 style={{ fontWeight: 800, fontSize: '16px', marginBottom: '12px' }}>
+                          Materi & Modul Kelas
+                        </h4>
+
+                        {classMateri.length === 0 ? (
+                          <p style={{ color: 'var(--ink2)', fontSize: '14px', marginBottom: '14px' }}>
+                            Belum ada materi tambahan yang diunggah oleh PJ Kelas.
+                          </p>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '18px' }}>
+                            {classMateri.map((m) => {
+                              const canDel = isUserAdmin || hasPjRight(currentClassId, 'mat');
+
+                              return (
+                                <div key={m.id} className="k" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                                    <div>
+                                      <b style={{ fontSize: '15px' }}>{m.title}</b>
+                                      {m.createdBy && (
+                                        <small style={{ color: 'var(--ink2)' }}>
+                                          Oleh {m.createdBy} • {formatCommentDate(m.createdAt)}
+                                        </small>
+                                      )}
+                                    </div>
+                                    {canDel && (
+                                      <button
+                                        type="button"
+                                        className="phb"
+                                        style={{ padding: '2px 8px', fontSize: '12px', color: '#E0245E', borderColor: '#E0245E' }}
+                                        onClick={async () => {
+                                          if (confirm(`Hapus materi "${m.title}"?`)) {
+                                            try {
+                                              await deleteDoc(doc(db, 'kelas', currentClassId, 'materi', m.id));
+                                              showToast('Materi dihapus.');
+                                            } catch (err) {
+                                              handleFirestoreError(err, OperationType.DELETE, `kelas/${currentClassId}/materi`);
+                                            }
+                                          }
+                                        }}
+                                      >
+                                        Hapus
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {m.description && (
+                                    <p style={{ margin: '4px 0', fontSize: '14px', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+                                      {m.description}
+                                    </p>
+                                  )}
+
+                                  {m.mediaBase64 && m.mediaType === 'image' && (
+                                    <img className="ph" src={m.mediaBase64} alt={m.title} style={{ maxHeight: '280px' }} />
+                                  )}
+
+                                  {m.mediaBase64 && m.mediaType === 'pdf' && (
+                                    <a
+                                      className="pdf-badge"
+                                      href={m.mediaBase64}
+                                      download={m.mediaName || `${m.title}.pdf`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                        <div
+                                          style={{
+                                            width: '36px',
+                                            height: '36px',
+                                            borderRadius: '8px',
+                                            background: '#FEE2E2',
+                                            color: '#DC2626',
+                                            display: 'grid',
+                                            placeItems: 'center',
+                                            fontWeight: 800,
+                                            fontSize: '11px',
+                                            flexShrink: 0
+                                          }}
+                                        >
+                                          PDF
+                                        </div>
+                                        <div>
+                                          <b style={{ fontSize: '14px', display: 'block', wordBreak: 'break-all' }}>
+                                            {m.mediaName || 'Dokumen PDF Materi'}
+                                          </b>
+                                          <small style={{ color: 'var(--ink2)' }}>Klik untuk unduh / buka materi</small>
+                                        </div>
+                                      </div>
+                                      <Ico name="link" size={16} />
+                                    </a>
+                                  )}
+
+                                  {m.link && (
+                                    <a
+                                      className="lkc"
+                                      href={m.link}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ alignSelf: 'flex-start' }}
+                                    >
+                                      <span>
+                                        <Ico name="link" size={15} />
+                                        Buka Tautan: {m.link.replace(/^https?:\/\//, '')}
+                                      </span>
+                                    </a>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         )}
+
+                        <h4 style={{ fontWeight: 800, fontSize: '15px', margin: '14px 0 8px' }}>
+                          Jadwal Pertemuan Webinar
+                        </h4>
+                        {[
+                          { title: 'Pertemuan 1', desc: 'Pengantar dan dasar materi' },
+                          { title: 'Pertemuan 2', desc: 'Praktik dan studi kasus' },
+                          { title: 'Pertemuan 3', desc: 'Studi kasus dan evaluasi' }
+                        ].map((m, i) => (
+                          <div key={i} className="k" style={{ alignItems: 'center' }}>
+                            <div>
+                              <b>{m.title}</b>
+                              <small>{m.desc}</small>
+                            </div>
+                            <div className="kact">
+                              <button
+                                className="phb"
+                                type="button"
+                                onClick={() => showToast(`Pertemuan ${i + 1} aktif sesuai jadwal webinar.`)}
+                              >
+                                Detail
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  {/* Class Management (Peserta) */}
+                  {classTab === 'peserta' && isClassManager && (
+                    <div className="panel2">
+                      <h3 className="sech" style={{ fontSize: '18px', fontWeight: 800, marginBottom: '10px' }}>
+                        Pengajuan Bergabung ({classMembers.filter((m) => m.status === 'pending').length})
+                      </h3>
+                      {classMembers.filter((m) => m.status === 'pending').length === 0 ? (
+                        <p style={{ color: 'var(--ink2)', fontSize: '14px', marginBottom: '16px' }}>
+                          Tidak ada pengajuan bergabung yang menunggu persetujuan.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+                          {classMembers
+                            .filter((m) => m.status === 'pending')
+                            .map((m) => (
+                              <div key={m.uid} className="k" style={{ alignItems: 'center' }}>
+                                <div>
+                                  <b>{m.displayName}</b>
+                                  <small>@{m.username} • Diajukan {formatCommentDate(m.appliedAt)}</small>
+                                </div>
+                                <div className="kact" style={{ display: 'flex', gap: '6px' }}>
+                                  <button
+                                    className="pill"
+                                    type="button"
+                                    onClick={() => handleApproveMember(m.uid)}
+                                    style={{ fontSize: '12px', padding: '6px 14px' }}
+                                  >
+                                    Terima
+                                  </button>
+                                  <button
+                                    className="pill o"
+                                    type="button"
+                                    onClick={() => handleRejectMember(m.uid)}
+                                    style={{ fontSize: '12px', padding: '6px 14px' }}
+                                  >
+                                    Tolak
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+
+                      <h3 className="sech" style={{ fontSize: '18px', fontWeight: 800, margin: '16px 0 10px' }}>
+                        Daftar Anggota Aktif ({classMembers.filter((m) => m.status === 'ok').length})
+                      </h3>
+                      {classMembers.filter((m) => m.status === 'ok').length === 0 ? (
+                        <p style={{ color: 'var(--ink2)', fontSize: '14px' }}>
+                          Belum ada peserta yang bergabung di kelas ini.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {classMembers
+                            .filter((m) => m.status === 'ok')
+                            .map((u) => (
+                              <div key={u.uid} className="k" style={{ alignItems: 'center' }}>
+                                <div>
+                                  <b>{u.displayName}</b>
+                                  <small>@{u.username}</small>
+                                </div>
+                                <div className="kact">
+                                  <button
+                                    className="phb"
+                                    type="button"
+                                    onClick={() => handleKickMember(u)}
+                                    style={{ color: '#E0245E', borderColor: '#E0245E' }}
+                                  >
+                                    Hapus dari Kelas
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </section>
@@ -2416,8 +3529,123 @@ export default function App() {
                     Atur peran dan hak tiap anggota. Admin punya semua hak. Moderator dan PJ kelas bisa dibatasi hak-nya satu per satu lewat tombol Atur hak. PJ kelas hanya berlaku di kelasnya sendiri.
                   </p>
 
-                  <div className="panel2">
-                    {allUsersList.map((a) => {
+                  {/* Header Pencarian dan Filter Peran */}
+                  {(() => {
+                    const adminsCount = allUsersList.filter((u) => u.role === 'admin' || u.email === ADMIN_EMAIL).length;
+                    const modsCount = allUsersList.filter((u) => u.role === 'moderator').length;
+                    const pjsCount = allUsersList.filter((u) => !!u.pjClass).length;
+                    const membersCount = allUsersList.filter(
+                      (u) => u.role !== 'admin' && u.email !== ADMIN_EMAIL && u.role !== 'moderator' && !u.pjClass
+                    ).length;
+
+                    const filteredModUsers = allUsersList.filter((a) => {
+                      const q = modMemberSearch.trim().toLowerCase();
+                      const matchSearch =
+                        !q ||
+                        a.displayName.toLowerCase().includes(q) ||
+                        a.username.toLowerCase().includes(q) ||
+                        (a.email && a.email.toLowerCase().includes(q));
+
+                      if (!matchSearch) return false;
+
+                      const isAdm = a.role === 'admin' || a.email === ADMIN_EMAIL;
+                      const isMod = a.role === 'moderator';
+                      const isPj = !!a.pjClass;
+
+                      if (modRoleFilter === 'admin') return isAdm;
+                      if (modRoleFilter === 'moderator') return isMod;
+                      if (modRoleFilter === 'pj') return isPj;
+                      if (modRoleFilter === 'member') return !isAdm && !isMod && !isPj;
+                      return true;
+                    });
+
+                    return (
+                      <>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '10px',
+                            marginTop: '16px',
+                            marginBottom: '8px'
+                          }}
+                        >
+                          <h3 style={{ fontSize: '17px', fontWeight: 800 }}>
+                            Daftar Anggota ({filteredModUsers.length} dari {allUsersList.length})
+                          </h3>
+                        </div>
+
+                        {/* Search Input Bar */}
+                        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                          <div style={{ position: 'relative', flex: 1 }}>
+                            <input
+                              type="text"
+                              style={{
+                                width: '100%',
+                                padding: '10px 36px 10px 14px',
+                                borderRadius: '12px',
+                                border: '1.5px solid var(--line)',
+                                background: 'var(--paper)',
+                                color: 'var(--ink)',
+                                fontSize: '14px'
+                              }}
+                              placeholder="Cari nama, username, atau email anggota..."
+                              value={modMemberSearch}
+                              onChange={(e) => setModMemberSearch(e.target.value)}
+                            />
+                            {modMemberSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setModMemberSearch('')}
+                                style={{
+                                  position: 'absolute',
+                                  right: '10px',
+                                  top: '50%',
+                                  transform: 'translateY(-50%)',
+                                  border: 0,
+                                  background: 'none',
+                                  color: 'var(--ink2)',
+                                  cursor: 'pointer',
+                                  fontSize: '18px'
+                                }}
+                                aria-label="Hapus pencarian"
+                              >
+                                &times;
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Filter Peran Chips */}
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                          {[
+                            ['all', `Semua (${allUsersList.length})`],
+                            ['admin', `Admin (${adminsCount})`],
+                            ['moderator', `Moderator (${modsCount})`],
+                            ['pj', `PJ Kelas (${pjsCount})`],
+                            ['member', `Member (${membersCount})`]
+                          ].map(([fKey, fLabel]) => (
+                            <button
+                              key={fKey}
+                              type="button"
+                              className={`pill ${modRoleFilter === fKey ? '' : 'o'}`}
+                              style={{ fontSize: '12px', padding: '5px 12px' }}
+                              onClick={() => setModRoleFilter(fKey as any)}
+                            >
+                              {fLabel}
+                            </button>
+                          ))}
+                        </div>
+
+                        <div className="panel2">
+                          {filteredModUsers.length === 0 ? (
+                            <p className="note" style={{ textAlign: 'center', padding: '24px 0' }}>
+                              Tidak ditemukan anggota yang sesuai dengan filter atau kata kunci "{modMemberSearch}".
+                            </p>
+                          ) : (
+                            filteredModUsers.map((a) => {
                       const isSelf = a.uid === firebaseUser?.uid;
                       const isTargetAdmin = a.role === 'admin';
                       const isTargetMod = a.role === 'moderator';
@@ -2618,10 +3846,14 @@ export default function App() {
                           )}
                         </div>
                       );
-                    })}
+                    })
+                  )}
                   </div>
-                </div>
-              )}
+                </>
+              );
+            })()}
+          </div>
+        )}
             </div>
           </section>
         )}
@@ -2642,7 +3874,17 @@ export default function App() {
                   <div className="pinfo">
                     <h2 id="pnm">{userProfile?.displayName}</h2>
                     <span className="adm" id="prl">{roleLabel}</span>
-                    <small className="pfl" id="pfl">@{userProfile?.username}</small>
+                    <small className="pfl" id="pfl" style={{ display: 'block', marginTop: '2px' }}>@{userProfile?.username}</small>
+
+                    <div style={{ display: 'flex', gap: '16px', margin: '8px 0', fontSize: '14px', color: 'var(--ink2)' }}>
+                      <div>
+                        <b style={{ color: 'var(--ink)' }}>{allUsersList.filter((u) => u.following?.includes(userProfile?.uid || '')).length}</b> Pengikut
+                      </div>
+                      <div>
+                        <b style={{ color: 'var(--ink)' }}>{userProfile?.following?.length || 0}</b> Mengikuti
+                      </div>
+                    </div>
+
                     <p id="pbio">{userProfile?.bio || 'Belum ada bio.'}</p>
                   </div>
                   <button
@@ -2760,47 +4002,103 @@ export default function App() {
                 </form>
               )}
 
-              {/* User's own posts list */}
+              {/* User's own posts and replies list */}
               <div className="mine" id="mineWrap">
                 <div className="pline"></div>
                 <div className="ptb">
                   <div className="ptabs" role="group" aria-label="Aktivitas akun">
-                    <button type="button" className="on">
-                      Postingan
+                    <button
+                      type="button"
+                      className={profileTab === 'posts' ? 'on' : ''}
+                      onClick={() => setProfileTab('posts')}
+                    >
+                      Postingan ({posts.filter((p) => p.uid === firebaseUser?.uid).length})
+                    </button>
+                    <button
+                      type="button"
+                      className={profileTab === 'replies' ? 'on' : ''}
+                      onClick={() => {
+                        setProfileTab('replies');
+                        if (firebaseUser) loadUserReplies(firebaseUser.uid);
+                      }}
+                    >
+                      Balasan {firebaseUser && userRepliesMap[firebaseUser.uid] ? `(${userRepliesMap[firebaseUser.uid].length})` : ''}
                     </button>
                   </div>
                 </div>
 
-                <div id="mine">
-                  {posts
-                    .filter((p) => p.uid === firebaseUser?.uid)
-                    .map((p) => (
-                      <div key={p.id} className="post mp">
-                        <div className="pt">
-                          <small>{new Date(p.createdAt).toLocaleDateString('id-ID')}</small>
-                          <span className="tag">{p.topic}</span>
-                        </div>
-                        <p>{p.content}</p>
-                        {p.imageBase64 && <img className="ph" src={p.imageBase64} alt="" />}
-                        <div className="acts">
-                          <span className="cnt">
-                            <Ico name="heart" size={18} /> {p.likesCount || 0}
-                          </span>
-                          <span className="cnt">
-                            <Ico name="msg" size={18} /> {p.commentsCount || 0}
-                          </span>
-                          <button
-                            className="rt"
-                            type="button"
-                            onClick={() => handleDeletePost(p)}
-                            aria-label="Hapus postingan"
-                          >
-                            <Ico name="trash" />
-                          </button>
-                        </div>
+                {profileTab === 'replies' ? (
+                  <div id="mineReplies">
+                    {loadingReplies ? (
+                      <p className="note" style={{ textAlign: 'center', padding: '16px 0' }}>Memuat balasan dan komentar...</p>
+                    ) : (userRepliesMap[firebaseUser?.uid || ''] || []).length === 0 ? (
+                      <p className="note" style={{ textAlign: 'center', padding: '16px 0' }}>Belum ada komentar atau balasan yang kamu tulis.</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                        {(userRepliesMap[firebaseUser?.uid || ''] || []).map((rep) => (
+                          <div key={rep.id} className="post" style={{ margin: 0, padding: '12px 16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '12px', color: 'var(--sky-d)', fontWeight: 700 }}>
+                                {rep.isReply ? `Balasan ke @${rep.replyToName}` : `Komentar di topik #${rep.postTopic}`}
+                              </span>
+                              <small style={{ color: 'var(--ink2)' }}>{formatCommentDate(rep.createdAt)}</small>
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--ink2)', fontStyle: 'italic', marginBottom: '6px', borderLeft: '2px solid var(--line)', paddingLeft: '8px' }}>
+                              "{rep.postSnippet}..."
+                            </div>
+                            <p style={{ margin: '4px 0', fontSize: '15px', whiteSpace: 'pre-wrap' }}>
+                              {rep.content}
+                            </p>
+                            <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                className="phb"
+                                style={{ fontSize: '12px', padding: '4px 10px' }}
+                                onClick={() => {
+                                  window.location.hash = `#/home?p=${rep.postId}`;
+                                  showToast('Membuka postingan...');
+                                }}
+                              >
+                                Lihat Postingan
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                </div>
+                    )}
+                  </div>
+                ) : (
+                  <div id="mine">
+                    {posts
+                      .filter((p) => p.uid === firebaseUser?.uid)
+                      .map((p) => (
+                        <div key={p.id} className="post mp">
+                          <div className="pt">
+                            <small>{new Date(p.createdAt).toLocaleDateString('id-ID')}</small>
+                            <span className="tag">{p.topic}</span>
+                          </div>
+                          <p>{p.content}</p>
+                          {p.imageBase64 && <img className="ph" src={p.imageBase64} alt="" />}
+                          <div className="acts">
+                            <span className="cnt">
+                              <Ico name="heart" size={18} /> {p.likesCount || 0}
+                            </span>
+                            <span className="cnt">
+                              <Ico name="msg" size={18} /> {p.commentsCount || 0}
+                            </span>
+                            <button
+                              className="rt"
+                              type="button"
+                              onClick={() => handleDeletePost(p)}
+                              aria-label="Hapus postingan"
+                            >
+                              <Ico name="trash" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -2831,45 +4129,122 @@ export default function App() {
                 </div>
                 <div className="pinfo">
                   <h2 id="knm">{viewedAccount?.displayName || 'Mahasiswa'}</h2>
-                  <span className="adm" id="krl">{viewedAccount?.role === 'admin' ? 'Admin' : viewedAccount?.role === 'moderator' ? 'Moderator' : 'Anggota'}</span>
-                  <small className="pfl" id="kfl">@{viewedAccount?.username}</small>
-                  <p id="kbio">{viewedAccount?.bio || 'Belum ada bio.'}</p>
+                  {viewedAccount && getUserRoleBadge(viewedAccount.uid, viewedAccount.role, viewedAccount.pjClass)}
+                  <small className="pfl" id="kfl" style={{ display: 'block', marginTop: '4px' }}>@{viewedAccount?.username}</small>
+
+                  <div style={{ display: 'flex', gap: '16px', margin: '10px 0', fontSize: '14px', color: 'var(--ink2)' }}>
+                    <div>
+                      <b style={{ color: 'var(--ink)' }}>{allUsersList.filter((u) => u.following?.includes(viewedAccount?.uid || '')).length}</b> Pengikut
+                    </div>
+                    <div>
+                      <b style={{ color: 'var(--ink)' }}>{viewedAccount?.following?.length || 0}</b> Mengikuti
+                    </div>
+                  </div>
+
+                  {viewedAccount && viewedAccount.uid !== firebaseUser?.uid && (
+                    <button
+                      type="button"
+                      className={`btn-follow ${(userProfile?.following || []).includes(viewedAccount.uid) ? 'following' : ''}`}
+                      onClick={() => handleToggleFollow(viewedAccount)}
+                      style={{ marginTop: '4px' }}
+                    >
+                      {(userProfile?.following || []).includes(viewedAccount.uid) ? 'Mengikuti' : 'Ikuti'}
+                    </button>
+                  )}
+
+                  <p id="kbio" style={{ marginTop: '10px' }}>{viewedAccount?.bio || 'Belum ada bio.'}</p>
                 </div>
               </div>
 
-              {/* Posts by this user */}
+              {/* Posts and replies by this user */}
               <div className="mine">
                 <div className="pline"></div>
                 <div className="ptb">
                   <div className="ptabs" role="group" aria-label="Aktivitas akun">
-                    <button type="button" className="on">
-                      Postingan
+                    <button
+                      type="button"
+                      className={viewedAccountTab === 'posts' ? 'on' : ''}
+                      onClick={() => setViewedAccountTab('posts')}
+                    >
+                      Postingan ({posts.filter((p) => p.uid === viewedAccount?.uid).length})
+                    </button>
+                    <button
+                      type="button"
+                      className={viewedAccountTab === 'replies' ? 'on' : ''}
+                      onClick={() => {
+                        setViewedAccountTab('replies');
+                        if (viewedAccount) loadUserReplies(viewedAccount.uid);
+                      }}
+                    >
+                      Balasan {viewedAccount && userRepliesMap[viewedAccount.uid] ? `(${userRepliesMap[viewedAccount.uid].length})` : ''}
                     </button>
                   </div>
                 </div>
 
-                <div id="kmine">
-                  {posts
-                    .filter((p) => p.uid === viewedAccount?.uid)
-                    .map((p) => (
-                      <div key={p.id} className="post mp">
-                        <div className="pt">
-                          <small>{new Date(p.createdAt).toLocaleDateString('id-ID')}</small>
-                          <span className="tag">{p.topic}</span>
-                        </div>
-                        <p>{p.content}</p>
-                        {p.imageBase64 && <img className="ph" src={p.imageBase64} alt="" />}
-                        <div className="acts">
-                          <span className="cnt">
-                            <Ico name="heart" size={18} /> {p.likesCount || 0}
-                          </span>
-                          <span className="cnt">
-                            <Ico name="msg" size={18} /> {p.commentsCount || 0}
-                          </span>
-                        </div>
+                {viewedAccountTab === 'replies' ? (
+                  <div id="kmineReplies">
+                    {loadingReplies ? (
+                      <p className="note" style={{ textAlign: 'center', padding: '16px 0' }}>Memuat balasan dan komentar...</p>
+                    ) : (userRepliesMap[viewedAccount?.uid || ''] || []).length === 0 ? (
+                      <p className="note" style={{ textAlign: 'center', padding: '16px 0' }}>Belum ada komentar atau balasan dari {viewedAccount?.displayName}.</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '12px' }}>
+                        {(userRepliesMap[viewedAccount?.uid || ''] || []).map((rep) => (
+                          <div key={rep.id} className="post" style={{ margin: 0, padding: '12px 16px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <span style={{ fontSize: '12px', color: 'var(--sky-d)', fontWeight: 700 }}>
+                                {rep.isReply ? `Balasan ke @${rep.replyToName}` : `Komentar di topik #${rep.postTopic}`}
+                              </span>
+                              <small style={{ color: 'var(--ink2)' }}>{formatCommentDate(rep.createdAt)}</small>
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--ink2)', fontStyle: 'italic', marginBottom: '6px', borderLeft: '2px solid var(--line)', paddingLeft: '8px' }}>
+                              "{rep.postSnippet}..."
+                            </div>
+                            <p style={{ margin: '4px 0', fontSize: '15px', whiteSpace: 'pre-wrap' }}>
+                              {rep.content}
+                            </p>
+                            <div style={{ marginTop: '8px', display: 'flex', justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                className="phb"
+                                style={{ fontSize: '12px', padding: '4px 10px' }}
+                                onClick={() => {
+                                  window.location.hash = `#/home?p=${rep.postId}`;
+                                  showToast('Membuka postingan...');
+                                }}
+                              >
+                                Lihat Postingan
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                </div>
+                    )}
+                  </div>
+                ) : (
+                  <div id="kmine">
+                    {posts
+                      .filter((p) => p.uid === viewedAccount?.uid)
+                      .map((p) => (
+                        <div key={p.id} className="post mp">
+                          <div className="pt">
+                            <small>{new Date(p.createdAt).toLocaleDateString('id-ID')}</small>
+                            <span className="tag">{p.topic}</span>
+                          </div>
+                          <p>{p.content}</p>
+                          {p.imageBase64 && <img className="ph" src={p.imageBase64} alt="" />}
+                          <div className="acts">
+                            <span className="cnt">
+                              <Ico name="heart" size={18} /> {p.likesCount || 0}
+                            </span>
+                            <span className="cnt">
+                              <Ico name="msg" size={18} /> {p.commentsCount || 0}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -3060,6 +4435,173 @@ export default function App() {
               </button>
             </div>
           </aside>
+        </div>
+      )}
+
+      {/* MODAL EDIT POSTINGAN */}
+      {editingPost && (
+        <div className="mdl on" onClick={() => setEditingPost(null)}>
+          <div className="mc" style={{ maxWidth: '520px', textAlign: 'left' }} onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="x" onClick={() => setEditingPost(null)}>
+              ×
+            </button>
+            <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>Edit Postingan</h3>
+            <p style={{ fontSize: '13px', color: 'var(--ink2)', marginBottom: '14px' }}>
+              Dapat diedit dalam 10 menit pertama sejak diposting.
+            </p>
+            <form onSubmit={handleSaveEditPost}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>
+                  Topik
+                </label>
+                <select
+                  value={editPostTopic}
+                  onChange={(e) => setEditPostTopic(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    fontSize: '14px'
+                  }}
+                >
+                  {['Umum', 'Tuton', 'Tugas', 'UAS', 'Info'].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>
+                  Isi Postingan
+                </label>
+                <textarea
+                  rows={5}
+                  value={editPostContent}
+                  onChange={(e) => {
+                    setEditPostContent(e.target.value);
+                    autoResizeTextarea(e.target);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    fontSize: '14px',
+                    lineHeight: 1.6,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    resize: 'none'
+                  }}
+                  required
+                />
+              </div>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>
+                  Tautan Link (Opsional)
+                </label>
+                <input
+                  type="url"
+                  value={editPostLink}
+                  onChange={(e) => setEditPostLink(e.target.value)}
+                  placeholder="https://..."
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" className="pill o" onClick={() => setEditingPost(null)}>
+                  Batal
+                </button>
+                <button type="submit" className="pill">
+                  Simpan Perubahan
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT PENGUMUMAN */}
+      {editingAnn && (
+        <div className="mdl on" onClick={() => setEditingAnn(null)}>
+          <div className="mc" style={{ maxWidth: '520px', textAlign: 'left' }} onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="x" onClick={() => setEditingAnn(null)}>
+              ×
+            </button>
+            <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>Edit Pengumuman</h3>
+            <p style={{ fontSize: '13px', color: 'var(--ink2)', marginBottom: '14px' }}>
+              Dapat diedit dalam 10 menit pertama sejak dibuat.
+            </p>
+            <form onSubmit={handleSaveEditAnn}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>
+                  Kategori
+                </label>
+                <select
+                  value={editAnnCategory}
+                  onChange={(e) => setEditAnnCategory(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    fontSize: '14px'
+                  }}
+                >
+                  {['Umum', 'Akademik', 'Registrasi', 'Webinar', 'Penting'].map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '4px' }}>
+                  Isi Pengumuman
+                </label>
+                <textarea
+                  rows={5}
+                  value={editAnnContent}
+                  onChange={(e) => {
+                    setEditAnnContent(e.target.value);
+                    autoResizeTextarea(e.target);
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    fontSize: '14px',
+                    lineHeight: 1.6,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    resize: 'none'
+                  }}
+                  required
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" className="pill o" onClick={() => setEditingAnn(null)}>
+                  Batal
+                </button>
+                <button type="submit" className="pill">
+                  Simpan Perubahan
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

@@ -1,32 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Calculator, FileText } from 'lucide-react';
 
 export const ToolsMahasiswa: React.FC = () => {
-  // Tools Nugas
-  const [taskTopic, setTaskTopic] = useState('');
-  const [taskOutline, setTaskOutline] = useState<string | null>(null);
-
-  const handleGenerateOutline = () => {
-    if (!taskTopic.trim()) return;
-    setTaskOutline(
-      `Sistematika Tugas Kuliah UT untuk topik "${taskTopic}":\n\n` +
-      `I. PENDAHULUAN\n` +
-      `- Latar belakang pentingnya mempelajari ${taskTopic}\n` +
-      `- Rumusan masalah & tujuan pembahasan tugas\n\n` +
-      `II. KAJIAN PUSTAKA / TEORI (Merujuk Modul BMP UT)\n` +
-      `- Konsep dasar dan definisi ahli menurut BMP Modul terkait\n` +
-      `- Landasan teori pendukung\n\n` +
-      `III. PEMBAHASAN / ANALISIS KASUS\n` +
-      `- Analisis pertanyaan tugas sesuai instruksi tutor\n` +
-      `- Contoh konkret penerapan di dunia nyata/lapangan\n\n` +
-      `IV. PENUTUP & KESIMPULAN\n` +
-      `- Kesimpulan inti jawaban tugas\n` +
-      `- Saran atau refleksi pembelajaran\n\n` +
-      `V. DAFTAR PUSTAKA\n` +
-      `- Cantumkan Buku Materi Pokok (BMP) UT beserta sumber jurnal/referensi kredibel.`
-    );
-  };
-
   return (
     <div className="body">
       <h2 className="t">Tools Mahasiswa</h2>
