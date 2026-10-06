@@ -559,3 +559,32 @@ a.phb{display:inline-flex;align-items:center}
   gap:6px;
 }
 
+.target-highlight {
+  animation: highlightPulse 3s ease-out forwards;
+  outline: 2.5px solid #FFD23F !important;
+  outline-offset: 3px;
+  position: relative;
+  border-radius: 12px;
+}
+
+@keyframes highlightPulse {
+  0% {
+    background-color: rgba(255, 210, 63, 0.38) !important;
+    box-shadow: 0 0 0 5px rgba(255, 210, 63, 0.45);
+  }
+  30% {
+    background-color: rgba(255, 210, 63, 0.28) !important;
+    box-shadow: 0 0 0 4px rgba(255, 210, 63, 0.3);
+  }
+  70% {
+    background-color: rgba(255, 210, 63, 0.12);
+    box-shadow: 0 0 0 2px rgba(255, 210, 63, 0.15);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: none;
+    outline-color: transparent !important;
+  }
+}
+
+

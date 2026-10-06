@@ -159,6 +159,9 @@ export interface NotificationItem {
   type: 'post' | 'tag' | 'reply' | 'comment' | 'follow';
   kind?: string;
   postId?: string;
+  commentId?: string;
+  replyId?: string;
+  classId?: string;
   snippet: string;
   read: boolean;
   createdAt: number;

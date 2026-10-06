@@ -180,6 +180,7 @@ export default function App() {
   // Notifications
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const unreadNotifsCount = notifications.filter((n) => !n.read).length;
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -347,12 +348,21 @@ export default function App() {
       setUserMenuOpen(false);
       setNotifMenuOpen(false);
       setSearchModalOpen(false);
+
+      if (route === 'akun' && paramPart) {
+        const params = new URLSearchParams(paramPart);
+        const u = params.get('u');
+        if (u) {
+          const match = allUsersList.find((usr) => usr.username.toLowerCase() === u.toLowerCase());
+          if (match) setViewedAccount(match);
+        }
+      }
     };
 
     window.addEventListener('hashchange', handleHash);
     handleHash();
     return () => window.removeEventListener('hashchange', handleHash);
-  }, []);
+  }, [allUsersList]);
 
   // Listen to Auth State
   useEffect(() => {
@@ -586,7 +596,7 @@ export default function App() {
       return;
     }
 
-    if (!firebaseUser.emailVerified && firebaseUser.providerData[0]?.providerId === 'password') {
+    if (!isUserAdmin && !firebaseUser.emailVerified && firebaseUser.providerData[0]?.providerId === 'password') {
       showToast('Verifikasi email kamu dulu untuk membuat postingan.');
       return;
     }
@@ -600,23 +610,24 @@ export default function App() {
     const pdfNameToUse = isClassPost && classPostMedia?.type === 'pdf' ? classPostMedia.name : '';
     const linkToUse = isClassPost ? '' : (postLink || '');
 
-    if (!textToUse && !imageToUse && !pdfBase64ToUse && !linkToUse) return;
+    if (!textToUse && !imageToUse && !pdfBase64ToUse && !linkToUse) {
+      showToast('Tulis sesuatu atau lampirkan foto/file.');
+      return;
+    }
 
     try {
       const newPostDoc = doc(collection(db, 'posts'));
-      const postData: PostItem = {
+      const postData: Record<string, any> = {
         id: newPostDoc.id,
         uid: firebaseUser.uid,
-        authorName: userProfile.displayName,
-        authorUsername: userProfile.username,
+        authorName: userProfile.displayName || 'Mahasiswa UT',
+        authorUsername: userProfile.username || 'user',
         authorPhoto: userProfile.photoURL || '',
-        authorRole: roleLabel,
+        authorRole: roleLabel || 'Member',
         isPj: !!userProfile.pjClass && userProfile.pjClass === classIdTarget,
         content: textToUse,
-        imageBase64: imageToUse,
-        pdfBase64: pdfBase64ToUse || undefined,
-        pdfName: pdfNameToUse || undefined,
-        link: linkToUse,
+        imageBase64: imageToUse || '',
+        link: linkToUse || '',
         topic: classIdTarget ? 'Kelas' : postTopic,
         classId: classIdTarget || '',
         isPinned: false,
@@ -627,8 +638,13 @@ export default function App() {
         updatedAt: Date.now()
       };
 
+      if (pdfBase64ToUse) {
+        postData.pdfBase64 = pdfBase64ToUse;
+        postData.pdfName = pdfNameToUse || 'dokumen.pdf';
+      }
+
       await setDoc(newPostDoc, postData);
-      setPosts((prev) => [postData, ...prev]);
+      setPosts((prev) => [postData as PostItem, ...prev]);
 
       // Fire notifications for mentions
       const mentionMatches = textToUse.match(/@[a-z0-9_.]{3,20}/gi) || [];
@@ -646,6 +662,7 @@ export default function App() {
             fromPhoto: userProfile.photoURL || '',
             type: 'tag',
             postId: newPostDoc.id,
+            classId: classIdTarget || '',
             snippet: textToUse.slice(0, 100),
             read: false,
             createdAt: Date.now()
@@ -665,9 +682,10 @@ export default function App() {
         setMediaMenuOpen(false);
         if (composerInputRef.current) composerInputRef.current.style.height = 'auto';
       }
-      showToast('Postingan diterbitkan.');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'posts');
+      showToast('Postingan berhasil diterbitkan.');
+    } catch (error: any) {
+      console.error('Error creating post:', error);
+      showToast('Gagal membuat postingan: ' + (error?.message || 'Terjadi kesalahan sistem'));
     }
   };
 
@@ -838,6 +856,138 @@ export default function App() {
     }
   };
 
+  // Navigasi & sorot konten (postingan, komentar, atau balasan) dari notifikasi
+  const openPostAndHighlight = useCallback(
+    async (
+      targetPostId: string,
+      targetCommentId?: string,
+      targetReplyId?: string,
+      targetClassId?: string
+    ) => {
+      if (targetClassId) {
+        setCurrentClassId(targetClassId);
+        setClassTab('posts');
+        if (currentRoute !== 'kelas') {
+          setCurrentRoute('kelas');
+        }
+      } else {
+        setFeedTab('feed');
+        setTopicFilter('Semua');
+        if (currentRoute !== 'home') {
+          setCurrentRoute('home');
+        }
+      }
+
+      // Pastikan postingan ada di state posts
+      let existingPost = posts.find((p) => p.id === targetPostId);
+      if (!existingPost) {
+        try {
+          const snap = await getDoc(doc(db, 'posts', targetPostId));
+          if (snap.exists()) {
+            existingPost = { id: snap.id, ...snap.data() } as PostItem;
+            setPosts((prev) => [existingPost!, ...prev.filter((p) => p.id !== targetPostId)]);
+          }
+        } catch {
+          // Abaikan
+        }
+      }
+
+      // Jika ada komentar atau balasan yang dituju, buka & muat komentar
+      if (targetCommentId || targetReplyId) {
+        try {
+          const commentsCol = collection(db, 'posts', targetPostId, 'comments');
+          const qSnap = await getDocs(query(commentsCol, orderBy('createdAt', 'asc')));
+          const loadedComments = qSnap.docs.map((d) => ({ id: d.id, ...d.data() } as CommentItem));
+          setPosts((prev) =>
+            prev.map((p) =>
+              p.id === targetPostId
+                ? { ...p, commentsOpen: true, comments: loadedComments, commentsLoaded: true }
+                : p
+            )
+          );
+        } catch {
+          // Abaikan
+        }
+      }
+
+      const elementId = targetReplyId
+        ? `reply-${targetReplyId}`
+        : targetCommentId
+        ? `comment-${targetCommentId}`
+        : `post-${targetPostId}`;
+
+      setHighlightedId(elementId);
+
+      // Coba scroll beberapa kali untuk memastikan elemen ter-render di DOM
+      const attemptScroll = (retries: number) => {
+        const el = document.getElementById(elementId);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (retries > 0) {
+          setTimeout(() => attemptScroll(retries - 1), 150);
+        }
+      };
+      setTimeout(() => attemptScroll(6), 100);
+
+      setTimeout(() => {
+        setHighlightedId((cur) => (cur === elementId ? null : cur));
+      }, 3800);
+    },
+    [posts, currentRoute]
+  );
+
+  // Handler klik notifikasi: bawa pengguna langsung ke komentar/konten yang dituju
+  const handleNotificationClick = async (n: NotificationItem) => {
+    if (!n.read && firebaseUser) {
+      try {
+        await updateDoc(doc(db, 'notifications', firebaseUser.uid, 'items', n.id), { read: true });
+        setNotifications((prev) => prev.map((item) => (item.id === n.id ? { ...item, read: true } : item)));
+      } catch {
+        // Abaikan
+      }
+    }
+    setNotifMenuOpen(false);
+
+    if (n.type === 'follow') {
+      const target = allUsersList.find(
+        (u) => u.uid === n.fromUid || (n.fromUsername && u.username.toLowerCase() === n.fromUsername.toLowerCase())
+      );
+      if (target) {
+        setViewedAccount(target);
+        window.location.hash = `#/akun?u=${encodeURIComponent(target.username)}`;
+      } else if (n.fromUsername) {
+        window.location.hash = `#/akun?u=${encodeURIComponent(n.fromUsername)}`;
+      }
+      return;
+    }
+
+    if (n.postId) {
+      const qParams = new URLSearchParams();
+      qParams.set('p', n.postId);
+      if (n.commentId) qParams.set('cid', n.commentId);
+      if (n.replyId) qParams.set('rid', n.replyId);
+      if (n.classId) qParams.set('k', n.classId);
+
+      const targetHash = n.classId ? `#/kelas?${qParams.toString()}` : `#/home?${qParams.toString()}`;
+      window.location.hash = targetHash;
+
+      await openPostAndHighlight(n.postId, n.commentId, n.replyId, n.classId);
+    }
+  };
+
+  // Listen to routeParam changes to open post and scroll to comment / reply / content
+  useEffect(() => {
+    if (!routeParam) return;
+    const params = new URLSearchParams(routeParam);
+    const pId = params.get('p');
+    const cId = params.get('cid') || params.get('c');
+    const rId = params.get('rid') || params.get('r');
+    const kId = params.get('k') || params.get('classId');
+    if (pId) {
+      openPostAndHighlight(pId, cId || undefined, rId || undefined, kId || undefined);
+    }
+  }, [routeParam, openPostAndHighlight]);
+
   // Add Comment
   const handleAddComment = async (post: PostItem, commentText: string) => {
     if (!firebaseUser || !userProfile || !commentText.trim()) return;
@@ -906,10 +1056,37 @@ export default function App() {
           fromPhoto: userProfile.photoURL || '',
           type: 'comment',
           postId: post.id,
+          commentId: newCommentDoc.id,
+          classId: post.classId || '',
           snippet: commentText.slice(0, 100),
           read: false,
           createdAt: Date.now()
         });
+      }
+
+      // Notify mentioned users in comment
+      const commentMentions = commentText.match(/@[a-z0-9_.]{3,20}/gi) || [];
+      for (const m of commentMentions) {
+        const uTarget = m.slice(1).toLowerCase();
+        const targetUser = allUsersList.find((u) => u.username.toLowerCase() === uTarget);
+        if (targetUser && targetUser.uid !== firebaseUser.uid && targetUser.uid !== post.uid) {
+          const notifRef = doc(collection(db, 'notifications', targetUser.uid, 'items'));
+          await setDoc(notifRef, {
+            id: notifRef.id,
+            toUid: targetUser.uid,
+            fromUid: firebaseUser.uid,
+            fromName: userProfile.displayName,
+            fromUsername: userProfile.username,
+            fromPhoto: userProfile.photoURL || '',
+            type: 'tag',
+            postId: post.id,
+            commentId: newCommentDoc.id,
+            classId: post.classId || '',
+            snippet: commentText.slice(0, 100),
+            read: false,
+            createdAt: Date.now()
+          });
+        }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, `posts/${post.id}/comments`);
@@ -985,10 +1162,39 @@ export default function App() {
           fromPhoto: userProfile.photoURL || '',
           type: 'reply',
           postId: post.id,
+          commentId: comment.id,
+          replyId: newReply.id,
+          classId: post.classId || '',
           snippet: replyText.slice(0, 100),
           read: false,
           createdAt: Date.now()
         });
+      }
+
+      // Notify mentioned users in reply
+      const replyMentions = replyText.match(/@[a-z0-9_.]{3,20}/gi) || [];
+      for (const m of replyMentions) {
+        const uTarget = m.slice(1).toLowerCase();
+        const targetUser = allUsersList.find((u) => u.username.toLowerCase() === uTarget);
+        if (targetUser && targetUser.uid !== firebaseUser.uid && targetUser.uid !== comment.uid) {
+          const notifRef = doc(collection(db, 'notifications', targetUser.uid, 'items'));
+          await setDoc(notifRef, {
+            id: notifRef.id,
+            toUid: targetUser.uid,
+            fromUid: firebaseUser.uid,
+            fromName: userProfile.displayName,
+            fromUsername: userProfile.username,
+            fromPhoto: userProfile.photoURL || '',
+            type: 'tag',
+            postId: post.id,
+            commentId: comment.id,
+            replyId: newReply.id,
+            classId: post.classId || '',
+            snippet: replyText.slice(0, 100),
+            read: false,
+            createdAt: Date.now()
+          });
+        }
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `posts/${post.id}/comments/${comment.id}`);
@@ -1627,11 +1833,7 @@ export default function App() {
                         key={n.id}
                         className={`ni ${n.read ? '' : 'un'}`}
                         type="button"
-                        onClick={async () => {
-                          await updateDoc(doc(db, 'notifications', firebaseUser.uid, 'items', n.id), { read: true });
-                          setNotifMenuOpen(false);
-                          window.location.hash = `#/home?p=${n.postId}`;
-                        }}
+                        onClick={() => handleNotificationClick(n)}
                       >
                         <div className="av">
                           {n.fromPhoto ? <img src={n.fromPhoto} alt="" /> : n.fromName.charAt(0).toUpperCase()}
@@ -1640,7 +1842,7 @@ export default function App() {
                           <div>
                             <b>{n.fromName}</b>{' '}
                             {n.type === 'tag'
-                              ? 'menyebut kamu di postingan/komentar'
+                              ? (n.commentId ? 'menyebut kamu dalam sebuah komentar' : 'menyebut kamu dalam postingan')
                               : n.type === 'reply'
                               ? 'membalas komentarmu'
                               : n.type === 'follow'
@@ -2267,7 +2469,12 @@ export default function App() {
                             Date.now() - post.createdAt < 10 * 60 * 1000 && (isOwner || isUserAdmin);
 
                           return (
-                            <div key={post.id} className={`post ${post.isPinned ? 'hl' : ''}`} data-pid={post.id}>
+                            <div
+                              key={post.id}
+                              id={`post-${post.id}`}
+                              className={`post ${post.isPinned ? 'hl' : ''} ${highlightedId === `post-${post.id}` ? 'target-highlight' : ''}`}
+                              data-pid={post.id}
+                            >
                               <div className="pt">
                                 <button
                                   type="button"
@@ -2465,7 +2672,7 @@ export default function App() {
                                 <div className="cms">
                                   {(post.comments || []).map((c) => (
                                     <div key={c.id}>
-                                      <div className="cm">
+                                      <div id={`comment-${c.id}`} className={`cm ${highlightedId === `comment-${c.id}` ? "target-highlight" : ""}`}>
                                         <div className="av">
                                           {c.authorPhoto ? (
                                             <img src={c.authorPhoto} alt="" />
@@ -2510,7 +2717,7 @@ export default function App() {
                                       {(c.replies || []).length > 0 && (
                                         <div className="rps">
                                           {c.replies?.map((r) => (
-                                            <div key={r.id} className="cm">
+                                            <div id={`reply-${r.id}`} key={r.id} className={`cm ${highlightedId === `reply-${r.id}` ? "target-highlight" : ""}`}>
                                               <div className="av">
                                                 {r.authorPhoto ? <img src={r.authorPhoto} alt="" /> : r.authorName.charAt(0).toUpperCase()}
                                               </div>
@@ -2987,7 +3194,7 @@ export default function App() {
                             const canDel = p.uid === firebaseUser?.uid || hasPjRight(currentClassId, 'del');
 
                             return (
-                              <div key={p.id} className={`post ${p.isPinned ? 'hl' : ''}`}>
+                              <div key={p.id} id={`post-${p.id}`} className={`post ${p.isPinned ? 'hl' : ''} ${highlightedId === `post-${p.id}` ? "target-highlight" : ""}`}>
                                 <div className="pt">
                                   <div className="av">{p.authorName.charAt(0).toUpperCase()}</div>
                                   <div>
@@ -4055,8 +4262,10 @@ export default function App() {
                                 className="phb"
                                 style={{ fontSize: '12px', padding: '4px 10px' }}
                                 onClick={() => {
-                                  window.location.hash = `#/home?p=${rep.postId}`;
-                                  showToast('Membuka postingan...');
+                                  const url = `#/home?p=${rep.postId}${rep.isReply ? `&rid=${rep.id}` : `&cid=${rep.id}`}`;
+                                  window.location.hash = url;
+                                  openPostAndHighlight(rep.postId, !rep.isReply ? rep.id : undefined, rep.isReply ? rep.id : undefined);
+                                  showToast('Membuka konten...');
                                 }}
                               >
                                 Lihat Postingan
@@ -4209,8 +4418,10 @@ export default function App() {
                                 className="phb"
                                 style={{ fontSize: '12px', padding: '4px 10px' }}
                                 onClick={() => {
-                                  window.location.hash = `#/home?p=${rep.postId}`;
-                                  showToast('Membuka postingan...');
+                                  const url = `#/home?p=${rep.postId}${rep.isReply ? `&rid=${rep.id}` : `&cid=${rep.id}`}`;
+                                  window.location.hash = url;
+                                  openPostAndHighlight(rep.postId, !rep.isReply ? rep.id : undefined, rep.isReply ? rep.id : undefined);
+                                  showToast('Membuka konten...');
                                 }}
                               >
                                 Lihat Postingan
