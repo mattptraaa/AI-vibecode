@@ -167,11 +167,6 @@ export default function App() {
 
   // UI state
   const [toastMsg, setToastMsg] = useState<string | null>(null);
-  const [welcomeBanner, setWelcomeBanner] = useState<{ show: boolean; text: string; date: string }>({
-    show: false,
-    text: '',
-    date: ''
-  });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notifMenuOpen, setNotifMenuOpen] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
@@ -181,6 +176,8 @@ export default function App() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const unreadNotifsCount = notifications.filter((n) => !n.read).length;
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [activeNotifPreview, setActiveNotifPreview] = useState<{ notif: NotificationItem; post?: PostItem | null } | null>(null);
+  const lastTargetParamRef = useRef<string>('');
 
   // Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -304,26 +301,41 @@ export default function App() {
     showToast(message);
   }, [showToast]);
 
-  // Auto-logout setelah 15 menit tidak ada aktivitas
+  // Auto-logout setelah 3 jam tidak ada aktivitas
   useEffect(() => {
     if (!firebaseUser) return;
-    const INACTIVITY_LIMIT_MS = 15 * 60 * 1000; // 15 menit
+    const INACTIVITY_LIMIT_MS = 3 * 60 * 60 * 1000; // 3 jam
     let timer: any;
 
-    const resetInactivityTimer = () => {
+    const checkStoredInactivity = () => {
+      const lastActive = localStorage.getItem('utf_last_active');
+      if (lastActive) {
+        const diff = Date.now() - parseInt(lastActive, 10);
+        if (diff >= INACTIVITY_LIMIT_MS) {
+          handleLogout('Sesi berakhir otomatis karena tidak ada aktivitas selama 3 jam.');
+          return false;
+        }
+      }
+      return true;
+    };
+
+    if (!checkStoredInactivity()) return;
+
+    const recordActivity = () => {
+      localStorage.setItem('utf_last_active', Date.now().toString());
       clearTimeout(timer);
       timer = setTimeout(() => {
-        handleLogout('Sesi berakhir otomatis karena tidak ada aktivitas selama 15 menit.');
+        handleLogout('Sesi berakhir otomatis karena tidak ada aktivitas selama 3 jam.');
       }, INACTIVITY_LIMIT_MS);
     };
 
-    const userEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove'];
-    userEvents.forEach((evt) => window.addEventListener(evt, resetInactivityTimer, { passive: true }));
-    resetInactivityTimer();
+    const userEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove', 'click'];
+    userEvents.forEach((evt) => window.addEventListener(evt, recordActivity, { passive: true }));
+    recordActivity();
 
     return () => {
       clearTimeout(timer);
-      userEvents.forEach((evt) => window.removeEventListener(evt, resetInactivityTimer));
+      userEvents.forEach((evt) => window.removeEventListener(evt, recordActivity));
     };
   }, [firebaseUser, handleLogout]);
 
@@ -455,18 +467,26 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch all users list for mentions & search
+  // Fetch all users list for mentions, search & kelola anggota (semua anggota tanpa batasan 100)
   useEffect(() => {
-    if (!firebaseUser) return;
-    const fetchUsers = async () => {
-      try {
-        const snap = await getDocs(query(collection(db, 'users'), limit(100)));
-        setAllUsersList(snap.docs.map((d) => d.data() as UserProfile));
-      } catch (e) {
-        // Soft fail
+    if (!firebaseUser) {
+      setAllUsersList([]);
+      return;
+    }
+    const unsubscribe = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        setAllUsersList(snapshot.docs.map((d) => d.data() as UserProfile));
+      },
+      () => {
+        getDocs(collection(db, 'users'))
+          .then((snap) => {
+            setAllUsersList(snap.docs.map((d) => d.data() as UserProfile));
+          })
+          .catch(() => {});
       }
-    };
-    fetchUsers();
+    );
+    return () => unsubscribe();
   }, [firebaseUser]);
 
   // Fetch / Query Posts (Pagination 20 per batch)
@@ -591,15 +611,27 @@ export default function App() {
 
   // Create Post (Beranda atau Postingan Kelas)
   const handleCreatePost = async (classIdTarget?: string) => {
-    if (!firebaseUser || !userProfile) {
+    if (!firebaseUser) {
       window.location.hash = '#/login';
       return;
     }
 
-    if (!isUserAdmin && !firebaseUser.emailVerified && firebaseUser.providerData[0]?.providerId === 'password') {
-      showToast('Verifikasi email kamu dulu untuk membuat postingan.');
-      return;
+    let profileToUse = userProfile;
+    if (!profileToUse) {
+      try {
+        const uSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+        if (uSnap.exists()) {
+          profileToUse = uSnap.data() as UserProfile;
+          setUserProfile(profileToUse);
+        }
+      } catch {
+        // fallback
+      }
     }
+
+    const currentAuthorName = profileToUse?.displayName || firebaseUser.displayName || 'Mahasiswa UT';
+    const currentAuthorUsername = profileToUse?.username || firebaseUser.displayName?.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'user_' + firebaseUser.uid.slice(0, 5);
+    const currentAuthorPhoto = profileToUse?.photoURL || firebaseUser.photoURL || '';
 
     const isClassPost = !!classIdTarget;
     const textToUse = isClassPost ? classPostText.trim() : postText.trim();
@@ -620,11 +652,11 @@ export default function App() {
       const postData: Record<string, any> = {
         id: newPostDoc.id,
         uid: firebaseUser.uid,
-        authorName: userProfile.displayName || 'Mahasiswa UT',
-        authorUsername: userProfile.username || 'user',
-        authorPhoto: userProfile.photoURL || '',
+        authorName: currentAuthorName,
+        authorUsername: currentAuthorUsername,
+        authorPhoto: currentAuthorPhoto,
         authorRole: roleLabel || 'Member',
-        isPj: !!userProfile.pjClass && userProfile.pjClass === classIdTarget,
+        isPj: !!profileToUse?.pjClass && profileToUse.pjClass === classIdTarget,
         content: textToUse,
         imageBase64: imageToUse || '',
         link: linkToUse || '',
@@ -657,9 +689,9 @@ export default function App() {
             id: notifRef.id,
             toUid: targetUser.uid,
             fromUid: firebaseUser.uid,
-            fromName: userProfile.displayName,
-            fromUsername: userProfile.username,
-            fromPhoto: userProfile.photoURL || '',
+            fromName: currentAuthorName,
+            fromUsername: currentAuthorUsername,
+            fromPhoto: currentAuthorPhoto,
             type: 'tag',
             postId: newPostDoc.id,
             classId: classIdTarget || '',
@@ -678,6 +710,7 @@ export default function App() {
         setPostText('');
         setPostImageBase64(null);
         setPostLink(null);
+        setLinkInputValue('');
         setLinkInputVisible(false);
         setMediaMenuOpen(false);
         if (composerInputRef.current) composerInputRef.current.style.height = 'auto';
@@ -795,12 +828,12 @@ export default function App() {
       return;
     }
 
-    if (!confirm('Apakah kamu yakin ingin menghapus postingan ini?')) return;
+    if (!confirm('Hapus postingan ini?')) return;
 
     setPosts((prev) => prev.filter((p) => p.id !== post.id));
     try {
       await deleteDoc(doc(db, 'posts', post.id));
-      showToast('Postingan dihapus.');
+      showToast('Postingan berhasil dihapus.');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `posts/${post.id}`);
     }
@@ -867,29 +900,27 @@ export default function App() {
       if (targetClassId) {
         setCurrentClassId(targetClassId);
         setClassTab('posts');
-        if (currentRoute !== 'kelas') {
-          setCurrentRoute('kelas');
-        }
+        setCurrentRoute('kelas');
       } else {
         setFeedTab('feed');
         setTopicFilter('Semua');
-        if (currentRoute !== 'home') {
-          setCurrentRoute('home');
-        }
+        setCurrentRoute('home');
       }
 
       // Pastikan postingan ada di state posts
-      let existingPost = posts.find((p) => p.id === targetPostId);
-      if (!existingPost) {
-        try {
-          const snap = await getDoc(doc(db, 'posts', targetPostId));
-          if (snap.exists()) {
-            existingPost = { id: snap.id, ...snap.data() } as PostItem;
-            setPosts((prev) => [existingPost!, ...prev.filter((p) => p.id !== targetPostId)]);
-          }
-        } catch {
-          // Abaikan
+      try {
+        const snap = await getDoc(doc(db, 'posts', targetPostId));
+        if (snap.exists()) {
+          const fetchedPost = { id: snap.id, ...snap.data() } as PostItem;
+          setPosts((prev) => {
+            const alreadyInState = prev.some((p) => p.id === targetPostId);
+            return alreadyInState
+              ? prev.map((p) => (p.id === targetPostId ? { ...p, commentsOpen: true } : p))
+              : [{ ...fetchedPost, commentsOpen: true }, ...prev];
+          });
         }
+      } catch {
+        // Abaikan
       }
 
       // Jika ada komentar atau balasan yang dituju, buka & muat komentar
@@ -918,25 +949,80 @@ export default function App() {
 
       setHighlightedId(elementId);
 
-      // Coba scroll beberapa kali untuk memastikan elemen ter-render di DOM
+      // Scroll sekali saja secara lembut ke kontainer scrolling (.body), tidak mengunci scroll window
+      let scrolled = false;
       const attemptScroll = (retries: number) => {
+        if (scrolled) return;
         const el = document.getElementById(elementId);
         if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } else if (retries > 0) {
-          setTimeout(() => attemptScroll(retries - 1), 150);
+          scrolled = true;
+          const scrollContainer = el.closest('.body') as HTMLElement | null;
+          if (scrollContainer) {
+            const containerRect = scrollContainer.getBoundingClientRect();
+            const elRect = el.getBoundingClientRect();
+            const targetTop = scrollContainer.scrollTop + (elRect.top - containerRect.top) - (containerRect.height / 2) + (elRect.height / 2);
+            scrollContainer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+          } else {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+          return;
+        }
+        if (retries > 0) {
+          setTimeout(() => attemptScroll(retries - 1), 120);
         }
       };
-      setTimeout(() => attemptScroll(6), 100);
+      setTimeout(() => attemptScroll(6), 60);
 
       setTimeout(() => {
         setHighlightedId((cur) => (cur === elementId ? null : cur));
-      }, 3800);
+      }, 3500);
     },
-    [posts, currentRoute]
+    []
   );
 
-  // Handler klik notifikasi: bawa pengguna langsung ke komentar/konten yang dituju
+  // Handler pratinjau isi notifikasi di layar (dialog modal cek isi)
+  const handlePreviewNotification = async (n: NotificationItem) => {
+    if (!n.read && firebaseUser) {
+      try {
+        await updateDoc(doc(db, 'notifications', firebaseUser.uid, 'items', n.id), { read: true });
+        setNotifications((prev) => prev.map((item) => (item.id === n.id ? { ...item, read: true } : item)));
+      } catch {
+        // Abaikan
+      }
+    }
+    setNotifMenuOpen(false);
+
+    if (n.type === 'follow') {
+      const target = allUsersList.find(
+        (u) => u.uid === n.fromUid || (n.fromUsername && u.username.toLowerCase() === n.fromUsername.toLowerCase())
+      );
+      if (target) {
+        setViewedAccount(target);
+        window.location.hash = `#/akun?u=${encodeURIComponent(target.username)}`;
+      } else if (n.fromUsername) {
+        window.location.hash = `#/akun?u=${encodeURIComponent(n.fromUsername)}`;
+      }
+      return;
+    }
+
+    if (n.postId) {
+      let foundPost = posts.find((p) => p.id === n.postId);
+      if (!foundPost) {
+        try {
+          const snap = await getDoc(doc(db, 'posts', n.postId));
+          if (snap.exists()) {
+            foundPost = { id: snap.id, ...snap.data() } as PostItem;
+            setPosts((prev) => [foundPost!, ...prev.filter((p) => p.id !== n.postId)]);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      setActiveNotifPreview({ notif: n, post: foundPost || null });
+    }
+  };
+
+  // Handler klik notifikasi: bawa pengguna langsung cek isi & sorot tempat tag/komentar
   const handleNotificationClick = async (n: NotificationItem) => {
     if (!n.read && firebaseUser) {
       try {
@@ -962,22 +1048,46 @@ export default function App() {
     }
 
     if (n.postId) {
-      const qParams = new URLSearchParams();
-      qParams.set('p', n.postId);
-      if (n.commentId) qParams.set('cid', n.commentId);
-      if (n.replyId) qParams.set('rid', n.replyId);
-      if (n.classId) qParams.set('k', n.classId);
+      let foundPost = posts.find((p) => p.id === n.postId);
+      if (!foundPost) {
+        try {
+          const snap = await getDoc(doc(db, 'posts', n.postId));
+          if (snap.exists()) {
+            foundPost = { id: snap.id, ...snap.data() } as PostItem;
+            setPosts((prev) => [foundPost!, ...prev.filter((p) => p.id !== n.postId)]);
+          }
+        } catch {
+          // ignore
+        }
+      }
 
-      const targetHash = n.classId ? `#/kelas?${qParams.toString()}` : `#/home?${qParams.toString()}`;
-      window.location.hash = targetHash;
+      const params = new URLSearchParams();
+      params.set('p', n.postId);
+      if (n.commentId) params.set('cid', n.commentId);
+      if (n.replyId) params.set('rid', n.replyId);
+      if (n.classId) params.set('k', n.classId);
+
+      const targetParamStr = params.toString();
+      lastTargetParamRef.current = targetParamStr;
+      const targetRoute = n.classId ? 'kelas' : 'home';
+      window.location.hash = `#/${targetRoute}?${targetParamStr}`;
 
       await openPostAndHighlight(n.postId, n.commentId, n.replyId, n.classId);
+
+      const actionText = n.type === 'tag'
+        ? (n.commentId ? 'Membuka komentar yang menandai kamu...' : 'Membuka postingan yang menandai kamu...')
+        : n.type === 'reply'
+        ? 'Membuka balasan komentarmu...'
+        : 'Membuka komentar di postinganmu...';
+      showToast(actionText);
     }
   };
 
   // Listen to routeParam changes to open post and scroll to comment / reply / content
   useEffect(() => {
     if (!routeParam) return;
+    if (lastTargetParamRef.current === routeParam) return;
+    lastTargetParamRef.current = routeParam;
     const params = new URLSearchParams(routeParam);
     const pId = params.get('p');
     const cId = params.get('cid') || params.get('c');
@@ -1285,12 +1395,7 @@ export default function App() {
         emailToUse = (userSnap.docs[0].data() as UserProfile).email;
       }
 
-      const cred = await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
-      setWelcomeBanner({
-        show: true,
-        text: `Selamat datang, ${cred.user.displayName || input}`,
-        date: new Date().toLocaleDateString('id-ID')
-      });
+      await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
       window.location.hash = '#/home';
     } catch (err: any) {
       setLoginError('Username atau password salah.');
@@ -1829,30 +1934,116 @@ export default function App() {
                     <p className="note">Belum ada notifikasi.</p>
                   ) : (
                     notifications.map((n) => (
-                      <button
+                      <div
                         key={n.id}
                         className={`ni ${n.read ? '' : 'un'}`}
-                        type="button"
+                        style={{
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          borderBottom: '1px solid var(--line)',
+                          padding: '10px 8px',
+                          transition: 'background-color 0.15s ease'
+                        }}
                         onClick={() => handleNotificationClick(n)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleNotificationClick(n);
+                          }
+                        }}
                       >
-                        <div className="av">
-                          {n.fromPhoto ? <img src={n.fromPhoto} alt="" /> : n.fromName.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="nt">
-                          <div>
-                            <b>{n.fromName}</b>{' '}
-                            {n.type === 'tag'
-                              ? (n.commentId ? 'menyebut kamu dalam sebuah komentar' : 'menyebut kamu dalam postingan')
-                              : n.type === 'reply'
-                              ? 'membalas komentarmu'
-                              : n.type === 'follow'
-                              ? 'mulai mengikuti akunmu'
-                              : 'berkomentar di postinganmu'}
+                        <div style={{ display: 'flex', gap: '10px', width: '100%', alignItems: 'flex-start' }}>
+                          <div className="av">
+                            {n.fromPhoto ? <img src={n.fromPhoto} alt="" /> : n.fromName.charAt(0).toUpperCase()}
                           </div>
-                          <div className="nx">{n.snippet || '(Foto atau tautan)'}</div>
-                          <small>{formatCommentDate(n.createdAt)}</small>
+                          <div className="nt" style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <b>{n.fromName}</b>
+                              <span style={{ fontSize: '11px', color: 'var(--ink2)' }}>@{n.fromUsername || 'user'}</span>
+                              <span
+                                style={{
+                                  fontSize: '10.5px',
+                                  fontWeight: 700,
+                                  padding: '2px 7px',
+                                  borderRadius: '999px',
+                                  background: n.type === 'tag' ? '#FEF08A' : n.type === 'reply' ? '#E0E7FF' : 'var(--sky-l)',
+                                  color: '#0E2A47'
+                                }}
+                              >
+                                {n.type === 'tag'
+                                  ? (n.commentId ? 'Tag di Komentar' : 'Tag di Postingan')
+                                  : n.type === 'reply'
+                                  ? 'Balasan Komentar'
+                                  : n.type === 'follow'
+                                  ? 'Pengikut Baru'
+                                  : 'Komentar'}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '12.5px', marginTop: '2px', color: 'var(--ink)' }}>
+                              {n.type === 'tag'
+                                ? (n.commentId ? 'menandai kamu dalam sebuah komentar:' : 'menandai kamu dalam postingan:')
+                                : n.type === 'reply'
+                                ? 'membalas komentarmu:'
+                                : n.type === 'follow'
+                                ? 'mulai mengikuti akunmu'
+                                : 'berkomentar di postinganmu:'}
+                            </div>
+                            {n.snippet && (
+                              <div
+                                className="nx"
+                                style={{
+                                  marginTop: '4px',
+                                  padding: '4px 8px',
+                                  background: 'var(--bg2)',
+                                  borderLeft: '2.5px solid var(--accent)',
+                                  borderRadius: '4px',
+                                  fontSize: '12px',
+                                  color: 'var(--ink)',
+                                  fontStyle: 'italic',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
+                                }}
+                              >
+                                &ldquo;{n.snippet}&rdquo;
+                              </div>
+                            )}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px' }}>
+                              <small style={{ color: 'var(--ink2)', fontSize: '11px' }}>{formatCommentDate(n.createdAt)}</small>
+                              <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  className="phb"
+                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handlePreviewNotification(n);
+                                  }}
+                                  title="Cek isi detail notifikasi"
+                                >
+                                  Cek Isi
+                                </button>
+                                <button
+                                  type="button"
+                                  className="phb"
+                                  style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'var(--sky-d)', color: '#fff', border: 'none' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleNotificationClick(n);
+                                  }}
+                                  title="Buka postingan dan sorot posisinya"
+                                >
+                                  Buka
+                                </button>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </button>
+                      </div>
                     ))
                   )}
                 </div>
@@ -1917,21 +2108,6 @@ export default function App() {
           </div>
         )}
       </header>
-
-      {/* WELCOME BANNER */}
-      {welcomeBanner.show && (
-        <div className="wb" id="wb" role="status">
-          <div className="wbx">
-            <div>
-              <b id="wbt">{welcomeBanner.text}</b>
-              <span id="wbd">Anda mengunjungi web pada {welcomeBanner.date}.</span>
-            </div>
-            <button type="button" id="wbc" onClick={() => setWelcomeBanner({ show: false, text: '', date: '' })} aria-label="Tutup">
-              &times;
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* VIEWS CONTAINER */}
       <div className="views">
@@ -2606,7 +2782,6 @@ export default function App() {
                                   className={post.commentsOpen ? 'on' : ''}
                                   onClick={() => toggleComments(post)}
                                   aria-label="Komentar"
-                                  aria-expanded={post.commentsOpen}
                                 >
                                   <Ico name="msg" />
                                   <span>{post.commentsCount || 0}</span>
@@ -4812,6 +4987,125 @@ export default function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DETAIL / CEK ISI NOTIFIKASI DI LAYAR */}
+      {activeNotifPreview && (
+        <div className="mdl on" onClick={() => setActiveNotifPreview(null)} role="dialog" aria-modal="true" aria-labelledby="notif-detail-title">
+          <div className="mc" style={{ maxWidth: '480px', textAlign: 'left' }} onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="x" onClick={() => setActiveNotifPreview(null)} aria-label="Tutup">
+              ×
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+              <div className="av" style={{ width: '42px', height: '42px', margin: 0, fontSize: '18px' }}>
+                {activeNotifPreview.notif.fromPhoto ? (
+                  <img src={activeNotifPreview.notif.fromPhoto} alt="" />
+                ) : (
+                  activeNotifPreview.notif.fromName.charAt(0).toUpperCase()
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <b id="notif-detail-title" style={{ fontSize: '16px', display: 'block' }}>{activeNotifPreview.notif.fromName}</b>
+                <span style={{ fontSize: '12px', color: 'var(--ink2)' }}>
+                  @{activeNotifPreview.notif.fromUsername || 'user'} • {formatCommentDate(activeNotifPreview.notif.createdAt)}
+                </span>
+              </div>
+              <span
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  padding: '4px 8px',
+                  borderRadius: '999px',
+                  background: 'var(--sky-l)',
+                  color: 'var(--ink)'
+                }}
+              >
+                {activeNotifPreview.notif.type === 'tag'
+                  ? (activeNotifPreview.notif.commentId ? 'Tag di Komentar' : 'Tag di Postingan')
+                  : activeNotifPreview.notif.type === 'reply'
+                  ? 'Balasan Komentar'
+                  : activeNotifPreview.notif.type === 'follow'
+                  ? 'Pengikut Baru'
+                  : 'Komentar'}
+              </span>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--ink2)', marginBottom: '4px' }}>
+                {activeNotifPreview.notif.type === 'tag'
+                  ? 'Isi Sebutan / Tag:'
+                  : activeNotifPreview.notif.type === 'reply'
+                  ? 'Isi Balasan Komentar:'
+                  : activeNotifPreview.notif.type === 'follow'
+                  ? 'Aktivitas Akun:'
+                  : 'Isi Komentar:'}
+              </div>
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'var(--bg2)',
+                  borderRadius: '12px',
+                  border: '1.5px solid var(--line)',
+                  fontSize: '14px',
+                  color: 'var(--ink)',
+                  whiteSpace: 'pre-wrap',
+                  lineHeight: 1.5
+                }}
+              >
+                {activeNotifPreview.notif.snippet || '(Tidak ada cuplikan teks)'}
+              </div>
+            </div>
+
+            {/* Post Context if available */}
+            {activeNotifPreview.post && (
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--ink2)', marginBottom: '4px' }}>
+                  Postingan Terkait (@{activeNotifPreview.post.authorUsername}):
+                </div>
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    background: 'var(--paper)',
+                    borderRadius: '10px',
+                    border: '1px solid var(--line)',
+                    fontSize: '13px',
+                    color: 'var(--ink2)',
+                    maxHeight: '90px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis'
+                  }}
+                >
+                  {activeNotifPreview.post.content || '(Foto atau tautan)'}
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button
+                type="button"
+                className="pill o"
+                onClick={() => setActiveNotifPreview(null)}
+                style={{ padding: '8px 16px', fontSize: '13px' }}
+              >
+                Tutup
+              </button>
+              {activeNotifPreview.notif.postId && (
+                <button
+                  type="button"
+                  className="pill"
+                  onClick={() => {
+                    const n = activeNotifPreview.notif;
+                    setActiveNotifPreview(null);
+                    handleNotificationClick(n);
+                  }}
+                  style={{ padding: '8px 18px', fontSize: '13px' }}
+                >
+                  Buka di Linimasa
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
