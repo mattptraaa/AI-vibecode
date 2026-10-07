@@ -11,7 +11,7 @@ export const ToolsMahasiswa: React.FC = () => {
       <div className="panel2" style={{ marginBottom: '20px' }}>
         {/* Tools UAS: langsung ke situs eksternal */}
         <a
-          href="https://www.tools-uas.utfamily.my.id"
+          href="https://tools-uas.utfamily.my.id/"
           target="_blank"
           rel="noopener noreferrer"
           className="k"
@@ -40,7 +40,7 @@ export const ToolsMahasiswa: React.FC = () => {
               </span>
             </div>
             <small>
-              Simulasi target nilai kelulusan UAS, aturan syarat skor minimum 30%, struktur pengerjaan (THE, UO, UTM), dan panduan ujian di tools-uas.utfamily.my.id
+              Buat latihan soal uas dari gabungan materi modul, inisiasi tuton dan target modul di tools-uas.utfamily.my.id
             </small>
           </div>
           <em>Kunjungi Situs &#8599;</em>
