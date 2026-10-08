@@ -295,43 +295,68 @@ export default function App() {
   }, []);
 
   const handleLogout = useCallback(async (msg?: any) => {
+    localStorage.removeItem('utf_session_start');
+    localStorage.removeItem('utf_last_active');
     await signOut(auth);
     window.location.hash = '#/home';
     const message = typeof msg === 'string' ? msg : 'Kamu telah keluar.';
     showToast(message);
   }, [showToast]);
 
-  // Auto-logout setelah 3 jam tidak ada aktivitas
+  // Aturan Sesi: Otomatis keluar setelah 3 jam atau 3 jam tanpa aktivitas, dan bebas login kembali kapan saja
   useEffect(() => {
     if (!firebaseUser) return;
-    const INACTIVITY_LIMIT_MS = 3 * 60 * 60 * 1000; // 3 jam
+    const THREE_HOURS_MS = 3 * 60 * 60 * 1000; // 3 jam
     let timer: any;
 
-    const checkStoredInactivity = () => {
-      const lastActive = localStorage.getItem('utf_last_active');
-      if (lastActive) {
-        const diff = Date.now() - parseInt(lastActive, 10);
-        if (diff >= INACTIVITY_LIMIT_MS) {
-          handleLogout('Sesi berakhir otomatis karena tidak ada aktivitas selama 3 jam.');
-          return false;
-        }
+    const now = Date.now();
+    const existingStart = localStorage.getItem('utf_session_start');
+    const existingActive = localStorage.getItem('utf_last_active');
+
+    // Jika belum ada timestamp atau timestamp lama kadaluarsa, inisialisasi sesi baru
+    if (!existingStart || now - parseInt(existingStart, 10) >= THREE_HOURS_MS) {
+      localStorage.setItem('utf_session_start', now.toString());
+    }
+    if (!existingActive || now - parseInt(existingActive, 10) >= THREE_HOURS_MS) {
+      localStorage.setItem('utf_last_active', now.toString());
+    }
+
+    const checkSessionAndInactivity = () => {
+      const currentNow = Date.now();
+      const sessionStart = parseInt(localStorage.getItem('utf_session_start') || currentNow.toString(), 10);
+      const lastActive = parseInt(localStorage.getItem('utf_last_active') || currentNow.toString(), 10);
+
+      // Cek apakah sudah lewat 3 jam sejak masuk atau 3 jam tanpa aktivitas
+      if (currentNow - sessionStart >= THREE_HOURS_MS || currentNow - lastActive >= THREE_HOURS_MS) {
+        handleLogout('Sesi telah berakhir setelah 3 jam. Silakan masuk kembali kapan saja untuk melanjutkan.');
+        return false;
       }
       return true;
     };
 
-    if (!checkStoredInactivity()) return;
+    const scheduleNextCheck = () => {
+      clearTimeout(timer);
+      const currentNow = Date.now();
+      const sessionStart = parseInt(localStorage.getItem('utf_session_start') || currentNow.toString(), 10);
+      const lastActive = parseInt(localStorage.getItem('utf_last_active') || currentNow.toString(), 10);
+      const remainingSession = Math.max(1000, THREE_HOURS_MS - (currentNow - sessionStart));
+      const remainingInactivity = Math.max(1000, THREE_HOURS_MS - (currentNow - lastActive));
+      const nextDelay = Math.min(remainingSession, remainingInactivity);
+
+      timer = setTimeout(() => {
+        if (!checkSessionAndInactivity()) return;
+        scheduleNextCheck();
+      }, nextDelay);
+    };
 
     const recordActivity = () => {
       localStorage.setItem('utf_last_active', Date.now().toString());
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        handleLogout('Sesi berakhir otomatis karena tidak ada aktivitas selama 3 jam.');
-      }, INACTIVITY_LIMIT_MS);
+      scheduleNextCheck();
     };
 
     const userEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'mousemove', 'click'];
     userEvents.forEach((evt) => window.addEventListener(evt, recordActivity, { passive: true }));
-    recordActivity();
+    scheduleNextCheck();
 
     return () => {
       clearTimeout(timer);
@@ -417,6 +442,8 @@ export default function App() {
           handleFirestoreError(error, OperationType.GET, `users/${currentFirebaseUser.uid}`);
         }
       } else {
+        localStorage.removeItem('utf_session_start');
+        localStorage.removeItem('utf_last_active');
         setUserProfile(null);
       }
     });
@@ -1396,6 +1423,9 @@ export default function App() {
       }
 
       await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
+      const now = Date.now().toString();
+      localStorage.setItem('utf_session_start', now);
+      localStorage.setItem('utf_last_active', now);
       window.location.hash = '#/home';
     } catch (err: any) {
       setLoginError('Username atau password salah.');
@@ -1435,6 +1465,9 @@ export default function App() {
       }
 
       const userCred = await createUserWithEmailAndPassword(auth, em, regPassword);
+      const now = Date.now().toString();
+      localStorage.setItem('utf_session_start', now);
+      localStorage.setItem('utf_last_active', now);
       await updateProfile(userCred.user, { displayName: regUsername.trim() });
 
       // Real email verification
@@ -1495,6 +1528,9 @@ export default function App() {
   const handleGoogleSignIn = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
+      const now = Date.now().toString();
+      localStorage.setItem('utf_session_start', now);
+      localStorage.setItem('utf_last_active', now);
       window.location.hash = '#/home';
     } catch (err: any) {
       showToast(err.message || 'Gagal login Google.');
