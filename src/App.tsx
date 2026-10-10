@@ -50,12 +50,14 @@ import {
   AnnouncementItem,
   NotificationItem,
   ReportItem,
-  UserRole
+  UserRole,
+  AboutItem
 } from './types';
 import { compressImage, compressAvatar } from './utils/imageCompressor';
 import { Ico, SunIcon, MoonIcon, UserSvgIcon } from './components/MockupIcons';
 import { Chatbot } from './components/Chatbot';
 import { ToolsMahasiswa } from './components/ToolsMahasiswa';
+import { ClassMeetingsView } from './components/ClassMeetingsView';
 
 const ADMIN_EMAIL = 'rahmatadisaputra021@gmail.com';
 const PAGE_SIZE = 20;
@@ -214,7 +216,7 @@ export default function App() {
 
   // Kelas state
   const [currentClassId, setCurrentClassId] = useState<string>('desain');
-  const [classTab, setClassTab] = useState<'posts' | 'forum' | 'materi' | 'peserta'>('posts');
+  const [classTab, setClassTab] = useState<'pertemuan' | 'posts' | 'forum' | 'materi' | 'peserta' | 'kelola_pj'>('pertemuan');
   const [classMateri, setClassMateri] = useState<MateriItem[]>([]);
   const [materiTitle, setMateriTitle] = useState('');
   const [materiDesc, setMateriDesc] = useState('');
@@ -223,6 +225,8 @@ export default function App() {
   // Moderasi state
   const [moderasiTab, setModerasiTab] = useState<'rep' | 'usr'>('rep');
   const [selectedUserForPj, setSelectedUserForPj] = useState<string | null>(null);
+  const [pjAssignUserId, setPjAssignUserId] = useState<string>('');
+  const [pjAssignClasses, setPjAssignClasses] = useState<string[]>(['desain']);
   const [openHakUserId, setOpenHakUserId] = useState<string | null>(null);
   const [modMemberSearch, setModMemberSearch] = useState('');
   const [modRoleFilter, setModRoleFilter] = useState<'all' | 'admin' | 'moderator' | 'pj' | 'member'>('all');
@@ -259,6 +263,17 @@ export default function App() {
 
   // Profile view / Edit state
   const [editingProfile, setEditingProfile] = useState(false);
+  const [userListModal, setUserListModal] = useState<{ open: boolean; title: string; users: UserProfile[] } | null>(null);
+
+  // About items state (Admin editable and addable)
+  const [aboutItems, setAboutItems] = useState<AboutItem[]>([]);
+  const [editingAboutItem, setEditingAboutItem] = useState<AboutItem | null>(null);
+  const [isAboutModalOpen, setIsAboutModalOpen] = useState(false);
+  const [aboutFormTitle, setAboutFormTitle] = useState('');
+  const [aboutFormDesc, setAboutFormDesc] = useState('');
+  const [aboutFormLink, setAboutFormLink] = useState('');
+  const [aboutFormIcon, setAboutFormIcon] = useState('');
+  const [isSavingAbout, setIsSavingAbout] = useState(false);
   const [profileNameInput, setProfileNameInput] = useState('');
   const [profileBioInput, setProfileBioInput] = useState('');
   const [profileAvatarNew, setProfileAvatarNew] = useState<string | null>(null);
@@ -516,12 +531,165 @@ export default function App() {
     return () => unsubscribe();
   }, [firebaseUser]);
 
-  // Fetch / Query Posts (Pagination 20 per batch)
+  // DEFAULT ABOUT ITEMS & Listener
+  const DEFAULT_ABOUT_ITEMS: AboutItem[] = [
+    {
+      id: 'instagram',
+      title: 'Instagram',
+      description: 'Kabar dan dokumentasi kegiatan',
+      link: 'https://www.instagram.com/ofc.utfamily?igsh=OGJraDRmcTgwbmh1',
+      icon: '/assets/icons/instagram.png'
+    },
+    {
+      id: 'whatsapp-channel',
+      title: 'WhatsApp Channel',
+      description: 'Pengumuman resmi komunitas',
+      link: 'https://www.whatsapp.com/channel/0029VbBvzaKADTOCNeLa4X2S',
+      icon: '/assets/icons/whatsapp.png'
+    },
+    {
+      id: 'link-wa-grup',
+      title: 'Link WA Grup',
+      description: 'Kumpulan link grup WhatsApp',
+      link: 'https://linktr.ee/utfamily',
+      icon: '/assets/icons/whatsapp.png'
+    },
+    {
+      id: 'tiktok',
+      title: 'TikTok',
+      description: 'Konten video komunitas',
+      link: 'https://www.tiktok.com/@ut.familypku?is_from_webapp=1&sender_device=pc',
+      icon: '/assets/icons/tiktok.png'
+    }
+  ];
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      collection(db, 'about_items'),
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as AboutItem));
+          items.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+          setAboutItems(items);
+        } else {
+          setAboutItems(DEFAULT_ABOUT_ITEMS);
+        }
+      },
+      () => {
+        setAboutItems(DEFAULT_ABOUT_ITEMS);
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const handleOpenAddAbout = () => {
+    setEditingAboutItem(null);
+    setAboutFormTitle('');
+    setAboutFormDesc('');
+    setAboutFormLink('');
+    setAboutFormIcon('/assets/icons/instagram.png');
+    setIsAboutModalOpen(true);
+  };
+
+  const handleOpenEditAbout = (item: AboutItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEditingAboutItem(item);
+    setAboutFormTitle(item.title);
+    setAboutFormDesc(item.description);
+    setAboutFormLink(item.link);
+    setAboutFormIcon(item.icon || '/assets/icons/instagram.png');
+    setIsAboutModalOpen(true);
+  };
+
+  const handleSaveAbout = async () => {
+    if (!aboutFormTitle.trim() || !aboutFormLink.trim()) {
+      showToast('Judul dan link wajib diisi.');
+      return;
+    }
+    setIsSavingAbout(true);
+    try {
+      const existingDocs = await getDocs(collection(db, 'about_items'));
+      if (existingDocs.empty) {
+        for (const itm of DEFAULT_ABOUT_ITEMS) {
+          if (!editingAboutItem || itm.id !== editingAboutItem.id) {
+            await setDoc(doc(db, 'about_items', itm.id), itm);
+          }
+        }
+      }
+
+      if (editingAboutItem) {
+        await setDoc(
+          doc(db, 'about_items', editingAboutItem.id),
+          {
+            id: editingAboutItem.id,
+            title: aboutFormTitle.trim(),
+            description: aboutFormDesc.trim(),
+            link: aboutFormLink.trim(),
+            icon: aboutFormIcon.trim() || '/assets/icons/instagram.png',
+            updatedAt: Date.now()
+          },
+          { merge: true }
+        );
+        showToast('Informasi About berhasil diperbarui.');
+      } else {
+        const newDocRef = doc(collection(db, 'about_items'));
+        await setDoc(newDocRef, {
+          id: newDocRef.id,
+          title: aboutFormTitle.trim(),
+          description: aboutFormDesc.trim(),
+          link: aboutFormLink.trim(),
+          icon: aboutFormIcon.trim() || '/assets/icons/instagram.png',
+          createdAt: Date.now()
+        });
+        showToast('Informasi About berhasil ditambahkan.');
+      }
+      setIsAboutModalOpen(false);
+    } catch (err: any) {
+      handleFirestoreError(err, OperationType.WRITE, 'about_items');
+    } finally {
+      setIsSavingAbout(false);
+    }
+  };
+
+  const handleDeleteAbout = async (item: AboutItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (window.confirm(`Hapus informasi "${item.title}"?`)) {
+      try {
+        const existingDocs = await getDocs(collection(db, 'about_items'));
+        if (existingDocs.empty) {
+          const remaining = DEFAULT_ABOUT_ITEMS.filter((i) => i.id !== item.id);
+          for (const rem of remaining) {
+            await setDoc(doc(db, 'about_items', rem.id), rem);
+          }
+          setAboutItems(remaining);
+        } else {
+          await deleteDoc(doc(db, 'about_items', item.id));
+        }
+        showToast('Informasi About dihapus.');
+      } catch (err: any) {
+        handleFirestoreError(err, OperationType.DELETE, `about_items/${item.id}`);
+      }
+    }
+  };
+
+  // Fetch / Query Posts (Pagination 20 per batch + always retain pinned posts)
   const fetchPosts = useCallback(
     async (isInitial = true) => {
       setPostsLoading(true);
       try {
         const postsRef = collection(db, 'posts');
+
+        // Always query pinned posts on initial fetch so old pinned posts stay pinned
+        let pinnedPosts: PostItem[] = [];
+        if (isInitial) {
+          try {
+            const pinSnap = await getDocs(query(postsRef, where('isPinned', '==', true)));
+            pinnedPosts = pinSnap.docs.map((d) => ({ id: d.id, ...d.data() } as PostItem));
+          } catch (e) {
+            console.error('Error fetching pinned posts:', e);
+          }
+        }
+
         let q = query(postsRef, orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
 
         if (!isInitial && lastVisibleDoc) {
@@ -533,9 +701,17 @@ export default function App() {
         const newPosts = docs.map((d) => ({ id: d.id, ...d.data() } as PostItem));
 
         if (isInitial) {
-          setPosts(newPosts);
+          const map = new Map<string, PostItem>();
+          pinnedPosts.forEach((p) => map.set(p.id, p));
+          newPosts.forEach((p) => map.set(p.id, p));
+          setPosts(Array.from(map.values()));
         } else {
-          setPosts((prev) => [...prev, ...newPosts]);
+          setPosts((prev) => {
+            const map = new Map<string, PostItem>();
+            prev.forEach((p) => map.set(p.id, p));
+            newPosts.forEach((p) => map.set(p.id, p));
+            return Array.from(map.values());
+          });
         }
 
         setLastVisibleDoc(docs[docs.length - 1] || null);
@@ -572,15 +748,16 @@ export default function App() {
 
   const hasPjRight = (classId: string, right: keyof NonNullable<UserProfile['hk']>) => {
     if (isUserAdmin) return true;
-    if (userProfile?.pjClass !== classId) return false;
-    return userProfile.hk ? userProfile.hk[right] !== false : true;
+    const isPj = userProfile?.pjClass === classId || (userProfile?.pjClasses && userProfile.pjClasses.includes(classId));
+    if (!isPj) return false;
+    return userProfile?.hk ? userProfile.hk[right] !== false : true;
   };
 
   const roleLabel = isUserAdmin
     ? 'Admin'
     : userProfile?.role === 'moderator'
     ? 'Moderator'
-    : userProfile?.pjClass
+    : userProfile?.role === 'pj' || userProfile?.pjClass || (userProfile?.pjClasses && userProfile.pjClasses.length > 0)
     ? 'PJ Kelas'
     : 'Member';
 
@@ -832,12 +1009,16 @@ export default function App() {
       }
     }
 
+    const pinTimestamp = newPinState ? Date.now() : undefined;
     setPosts((prev) =>
-      prev.map((p) => (p.id === post.id ? { ...p, isPinned: newPinState } : p))
+      prev.map((p) => (p.id === post.id ? { ...p, isPinned: newPinState, pinnedAt: pinTimestamp } : p))
     );
 
     try {
-      await updateDoc(doc(db, 'posts', post.id), { isPinned: newPinState });
+      await updateDoc(doc(db, 'posts', post.id), {
+        isPinned: newPinState,
+        pinnedAt: newPinState ? Date.now() : null
+      });
       showToast(newPinState ? 'Postingan disematkan ke paling atas' : 'Sematan dilepas');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `posts/${post.id}`);
@@ -1716,7 +1897,7 @@ export default function App() {
   }, [firebaseUser, currentClassId]);
 
   // Hak & Status Kelas
-  const isClassManager = isUserAdmin || userProfile?.pjClass === currentClassId;
+  const isClassManager = isUserAdmin || userProfile?.pjClass === currentClassId || (userProfile?.pjClasses && userProfile.pjClasses.includes(currentClassId));
   const myClassMembership = classMembers.find((m) => m.uid === firebaseUser?.uid);
   const isClassApproved = isClassManager || myClassMembership?.status === 'ok';
   const isClassPending = !isClassManager && myClassMembership?.status === 'pending';
@@ -2665,6 +2846,9 @@ export default function App() {
                       const pinA = a.isPinned ? 1 : 0;
                       const pinB = b.isPinned ? 1 : 0;
                       if (pinA !== pinB) return pinB - pinA; // Pinned posts tampil teratas
+                      const pinTimeA = a.pinnedAt || a.createdAt || 0;
+                      const pinTimeB = b.pinnedAt || b.createdAt || 0;
+                      if (pinA && pinB) return pinTimeB - pinTimeA;
                       return (b.createdAt || 0) - (a.createdAt || 0);
                     });
                     const displayed = topicFilter === 'Semua' ? sortedPosts : sortedPosts.slice(0, 10);
@@ -3214,7 +3398,6 @@ export default function App() {
                 <div>
                   {isClassPending ? (
                     <div style={{ background: 'var(--card)', border: '2px solid var(--ink)', borderRadius: '20px', padding: '26px', textAlign: 'center', marginTop: '16px', boxShadow: '6px 6px 0 var(--sh)' }}>
-                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>⏳</div>
                       <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>Pengajuan Menunggu Persetujuan</h3>
                       <p style={{ color: 'var(--ink2)', margin: '8px auto 16px', maxWidth: '420px', lineHeight: 1.5, fontSize: '14px' }}>
                         Permintaanmu untuk bergabung ke kelas ini telah terkirim. PJ Kelas atau Admin akan meninjau dan menyetujui pengajuanmu.
@@ -3225,7 +3408,6 @@ export default function App() {
                     </div>
                   ) : (
                     <div style={{ background: 'var(--card)', border: '2px solid var(--ink)', borderRadius: '20px', padding: '26px', textAlign: 'center', marginTop: '16px', boxShadow: '6px 6px 0 var(--sh)' }}>
-                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>🔒</div>
                       <h3 style={{ fontSize: '20px', fontWeight: 800, marginBottom: '6px' }}>Kelas Terbatas untuk Anggota</h3>
                       <p style={{ color: 'var(--ink2)', margin: '8px auto 18px', maxWidth: '440px', lineHeight: 1.5, fontSize: '14px' }}>
                         Untuk menjaga ketertiban diskusi dan webinar belajar, kamu harus mengajukan bergabung terlebih dahulu sebelum dapat mengakses postingan, materi, dan forum kelas ini.
@@ -3248,6 +3430,14 @@ export default function App() {
                     <div className="ptabs" role="group" aria-label="Isi kelas">
                       <button
                         type="button"
+                        className={classTab === 'pertemuan' ? 'on' : ''}
+                        onClick={() => setClassTab('pertemuan')}
+                        aria-pressed={classTab === 'pertemuan'}
+                      >
+                        Webinar & Pertemuan
+                      </button>
+                      <button
+                        type="button"
                         className={classTab === 'posts' ? 'on' : ''}
                         onClick={() => setClassTab('posts')}
                         aria-pressed={classTab === 'posts'}
@@ -3260,7 +3450,7 @@ export default function App() {
                         onClick={() => setClassTab('materi')}
                         aria-pressed={classTab === 'materi'}
                       >
-                        Materi
+                        Materi Tambahan
                       </button>
                       {isClassManager && (
                         <button
@@ -3272,10 +3462,36 @@ export default function App() {
                           Kelola Peserta {classMembers.filter(m => m.status === 'pending').length > 0 && `(${classMembers.filter(m => m.status === 'pending').length})`}
                         </button>
                       )}
+                      {isUserAdmin && (
+                        <button
+                          type="button"
+                          className={classTab === 'kelola_pj' ? 'on' : ''}
+                          onClick={() => setClassTab('kelola_pj')}
+                          aria-pressed={classTab === 'kelola_pj'}
+                        >
+                          Kelola PJ Kelas
+                        </button>
+                      )}
                     </div>
                   </div>
 
                   <div className="pline" style={{ marginTop: '0' }} />
+
+                  {/* TAB: WEBINAR & PERTEMUAN RESMI UT FAMILY */}
+                  {classTab === 'pertemuan' && (
+                    <ClassMeetingsView
+                      classId={currentClassId}
+                      isUserAdmin={isUserAdmin}
+                      currentUserUid={firebaseUser?.uid}
+                      userRole={userProfile?.role}
+                      userPjClasses={userProfile?.pjClasses || (userProfile?.pjClass ? [userProfile.pjClass] : [])}
+                      userPjClass={userProfile?.pjClass || undefined}
+                      showToast={showToast}
+                      onBackToClasses={() => {
+                        window.location.hash = '#/kegiatanmahasiswa';
+                      }}
+                    />
+                  )}
 
                   {/* Class Posts */}
                   {classTab === 'posts' && (
@@ -3393,6 +3609,9 @@ export default function App() {
                             const pinA = a.isPinned ? 1 : 0;
                             const pinB = b.isPinned ? 1 : 0;
                             if (pinA !== pinB) return pinB - pinA; // Pinned posts tampil teratas
+                            const pinTimeA = a.pinnedAt || a.createdAt || 0;
+                            const pinTimeB = b.pinnedAt || b.createdAt || 0;
+                            if (pinA && pinB) return pinTimeB - pinTimeA;
                             return (b.createdAt || 0) - (a.createdAt || 0);
                           });
 
@@ -3762,31 +3981,6 @@ export default function App() {
                             })}
                           </div>
                         )}
-
-                        <h4 style={{ fontWeight: 800, fontSize: '15px', margin: '14px 0 8px' }}>
-                          Jadwal Pertemuan Webinar
-                        </h4>
-                        {[
-                          { title: 'Pertemuan 1', desc: 'Pengantar dan dasar materi' },
-                          { title: 'Pertemuan 2', desc: 'Praktik dan studi kasus' },
-                          { title: 'Pertemuan 3', desc: 'Studi kasus dan evaluasi' }
-                        ].map((m, i) => (
-                          <div key={i} className="k" style={{ alignItems: 'center' }}>
-                            <div>
-                              <b>{m.title}</b>
-                              <small>{m.desc}</small>
-                            </div>
-                            <div className="kact">
-                              <button
-                                className="phb"
-                                type="button"
-                                onClick={() => showToast(`Pertemuan ${i + 1} aktif sesuai jadwal webinar.`)}
-                              >
-                                Detail
-                              </button>
-                            </div>
-                          </div>
-                        ))}
                       </div>
                     </div>
                   )}
@@ -3867,6 +4061,211 @@ export default function App() {
                       )}
                     </div>
                   )}
+
+                  {/* Kelola PJ Kelas (Khusus Admin) */}
+                  {classTab === 'kelola_pj' && isUserAdmin && (
+                    <div className="panel2">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                        <div>
+                          <h3 className="sech" style={{ fontSize: '18px', fontWeight: 800, margin: '0 0 4px' }}>
+                            Kelola Penanggung Jawab (PJ) Kelas
+                          </h3>
+                          <p style={{ margin: 0, fontSize: '13px', color: 'var(--ink2)' }}>
+                            Hanya Admin yang dapat menambah atau mencabut peran PJ. Satu PJ dapat memegang satu atau lebih kelas.
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Current PJs list */}
+                      <h4 style={{ fontWeight: 800, fontSize: '15px', margin: '14px 0 8px' }}>
+                        Daftar Penanggung Jawab (PJ) Saat Ini
+                      </h4>
+
+                      {(() => {
+                        const allPjs = allUsersList.filter(
+                          (u) => u.role === 'pj' || u.pjClass || (u.pjClasses && u.pjClasses.length > 0)
+                        );
+
+                        if (allPjs.length === 0) {
+                          return (
+                            <p style={{ color: 'var(--ink2)', fontSize: '13px', marginBottom: '16px' }}>
+                              Belum ada anggota yang ditugaskan sebagai PJ kelas. Gunakan formulir di bawah untuk menugaskan PJ baru.
+                            </p>
+                          );
+                        }
+
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '22px' }}>
+                            {allPjs.map((pjUser) => {
+                              const assignedClasses = pjUser.pjClasses && pjUser.pjClasses.length > 0
+                                ? pjUser.pjClasses
+                                : pjUser.pjClass ? [pjUser.pjClass] : [];
+
+                              return (
+                                <div key={pjUser.uid} className="k" style={{ alignItems: 'center' }}>
+                                  <div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <b>{pjUser.displayName}</b>
+                                      <small>@{pjUser.username}</small>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap' }}>
+                                      {assignedClasses.map((cls) => (
+                                        <span
+                                          key={cls}
+                                          style={{
+                                            fontSize: '11px',
+                                            fontWeight: 800,
+                                            background: cls === currentClassId ? '#EEF2FF' : 'var(--bg)',
+                                            color: cls === currentClassId ? '#4F46E5' : 'var(--ink)',
+                                            border: '1px solid var(--ink)',
+                                            padding: '2px 6px',
+                                            borderRadius: '4px'
+                                          }}
+                                        >
+                                          PJ {cls === 'desain' ? 'Desain Grafis' : cls === 'speaking' ? 'Public Speaking' : 'AI Skill'}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="kact">
+                                    <button
+                                      type="button"
+                                      className="phb"
+                                      style={{ color: '#E0245E', borderColor: '#E0245E', fontSize: '12px' }}
+                                      onClick={async () => {
+                                        if (confirm(`Cabut peran PJ dari ${pjUser.displayName}?`)) {
+                                          try {
+                                            await updateDoc(doc(db, 'users', pjUser.uid), {
+                                              role: 'member',
+                                              pjClass: null,
+                                              pjClasses: []
+                                            });
+                                            showToast(`Peran PJ ${pjUser.displayName} berhasil dicabut.`);
+                                          } catch (err: any) {
+                                            handleFirestoreError(err, OperationType.UPDATE, `users/${pjUser.uid}`);
+                                          }
+                                        }
+                                      }}
+                                    >
+                                      Cabut PJ
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+
+                      {/* Form Penugasan PJ Baru */}
+                      <div
+                        style={{
+                          background: 'var(--card)',
+                          border: '1.5px solid var(--ink)',
+                          borderRadius: '12px',
+                          padding: '16px',
+                          marginTop: '12px'
+                        }}
+                      >
+                        <h4 style={{ fontWeight: 800, fontSize: '15px', marginBottom: '10px' }}>
+                          Angkat Anggota Menjadi PJ Kelas
+                        </h4>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          <div>
+                            <label style={{ fontSize: '13px', fontWeight: 700, display: 'block', marginBottom: '4px' }}>
+                              Pilih Anggota:
+                            </label>
+                            <select
+                              className="kin"
+                              style={{ width: '100%', padding: '8px 12px' }}
+                              value={pjAssignUserId}
+                              onChange={(e) => setPjAssignUserId(e.target.value)}
+                            >
+                              <option value="">-- Pilih Anggota dari UT Family --</option>
+                              {allUsersList
+                                .filter((u) => u.email !== ADMIN_EMAIL)
+                                .map((u) => (
+                                  <option key={u.uid} value={u.uid}>
+                                    {u.displayName} (@{u.username}) {u.role === 'pj' ? '[Sudah PJ]' : ''}
+                                  </option>
+                                ))}
+                            </select>
+                          </div>
+
+                          <div>
+                            <label style={{ fontSize: '13px', fontWeight: 700, display: 'block', marginBottom: '6px' }}>
+                              Kelas yang Dipegang (Bisa Lebih dari Satu):
+                            </label>
+                            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                              {[
+                                { id: 'desain', label: 'Desain Grafis' },
+                                { id: 'speaking', label: 'Public Speaking' },
+                                { id: 'ai', label: 'AI Skill' }
+                              ].map((c) => {
+                                const isChecked = pjAssignClasses.includes(c.id);
+                                return (
+                                  <label
+                                    key={c.id}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      fontSize: '13px',
+                                      cursor: 'pointer',
+                                      background: isChecked ? '#EEF2FF' : 'var(--bg)',
+                                      padding: '6px 12px',
+                                      borderRadius: '8px',
+                                      border: `1.5px solid ${isChecked ? '#4F46E5' : 'var(--line)'}`
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setPjAssignClasses([...pjAssignClasses, c.id]);
+                                        } else {
+                                          setPjAssignClasses(pjAssignClasses.filter((x) => x !== c.id));
+                                        }
+                                      }}
+                                    />
+                                    <b>{c.label}</b>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                            <button
+                              type="button"
+                              className="pill"
+                              disabled={!pjAssignUserId || pjAssignClasses.length === 0}
+                              onClick={async () => {
+                                if (!pjAssignUserId || pjAssignClasses.length === 0) return;
+                                const targetUser = allUsersList.find((u) => u.uid === pjAssignUserId);
+                                try {
+                                  await updateDoc(doc(db, 'users', pjAssignUserId), {
+                                    role: 'pj',
+                                    pjClasses: pjAssignClasses,
+                                    pjClass: pjAssignClasses[0]
+                                  });
+                                  showToast(`${targetUser?.displayName || 'Anggota'} berhasil diangkat sebagai PJ kelas.`);
+                                  setPjAssignUserId('');
+                                } catch (err: any) {
+                                  handleFirestoreError(err, OperationType.UPDATE, `users/${pjAssignUserId}`);
+                                }
+                              }}
+                            >
+                              Tetapkan Sebagai PJ Kelas
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -3895,7 +4294,7 @@ export default function App() {
                     {link.title}
                     <small>{link.desc}</small>
                   </div>
-                  <span>&#8599;</span>
+                  <span>Buka</span>
                 </a>
               ))}
             </div>
@@ -4295,10 +4694,32 @@ export default function App() {
                     <small className="pfl" id="pfl" style={{ display: 'block', marginTop: '2px' }}>@{userProfile?.username}</small>
 
                     <div style={{ display: 'flex', gap: '16px', margin: '8px 0', fontSize: '14px', color: 'var(--ink2)' }}>
-                      <div>
+                      <div
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          const followers = allUsersList.filter((u) => u.following?.includes(userProfile?.uid || ''));
+                          setUserListModal({
+                            open: true,
+                            title: `Pengikut ${userProfile?.displayName || ''}`,
+                            users: followers
+                          });
+                        }}
+                        title="Lihat siapa yang mengikuti kamu"
+                      >
                         <b style={{ color: 'var(--ink)' }}>{allUsersList.filter((u) => u.following?.includes(userProfile?.uid || '')).length}</b> Pengikut
                       </div>
-                      <div>
+                      <div
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          const following = allUsersList.filter((u) => userProfile?.following?.includes(u.uid));
+                          setUserListModal({
+                            open: true,
+                            title: `Mengikuti (${userProfile?.displayName || ''})`,
+                            users: following
+                          });
+                        }}
+                        title="Lihat siapa yang kamu ikuti"
+                      >
                         <b style={{ color: 'var(--ink)' }}>{userProfile?.following?.length || 0}</b> Mengikuti
                       </div>
                     </div>
@@ -4553,10 +4974,32 @@ export default function App() {
                   <small className="pfl" id="kfl" style={{ display: 'block', marginTop: '4px' }}>@{viewedAccount?.username}</small>
 
                   <div style={{ display: 'flex', gap: '16px', margin: '10px 0', fontSize: '14px', color: 'var(--ink2)' }}>
-                    <div>
+                    <div
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        const followers = allUsersList.filter((u) => u.following?.includes(viewedAccount?.uid || ''));
+                        setUserListModal({
+                          open: true,
+                          title: `Pengikut ${viewedAccount?.displayName || ''}`,
+                          users: followers
+                        });
+                      }}
+                      title="Lihat siapa yang mengikuti akun ini"
+                    >
                       <b style={{ color: 'var(--ink)' }}>{allUsersList.filter((u) => u.following?.includes(viewedAccount?.uid || '')).length}</b> Pengikut
                     </div>
-                    <div>
+                    <div
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        const following = allUsersList.filter((u) => viewedAccount?.following?.includes(u.uid));
+                        setUserListModal({
+                          open: true,
+                          title: `Mengikuti (${viewedAccount?.displayName || ''})`,
+                          users: following
+                        });
+                      }}
+                      title="Lihat siapa yang diikuti"
+                    >
                       <b style={{ color: 'var(--ink)' }}>{viewedAccount?.following?.length || 0}</b> Mengikuti
                     </div>
                   </div>
@@ -4672,78 +5115,125 @@ export default function App() {
           </section>
         )}
 
-        {/* VIEW: ABOUT: Exact mockup links and icons */}
+        {/* VIEW: ABOUT */}
         {currentRoute === 'about' && (
           <section className="view on" id="about">
             <div className="body">
-              <h2 className="t">About</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                <h2 className="t" style={{ margin: 0 }}>About</h2>
+                {isUserAdmin && (
+                  <button
+                    type="button"
+                    className="pill"
+                    onClick={handleOpenAddAbout}
+                    style={{ fontSize: '13px', padding: '6px 14px' }}
+                  >
+                    + Tambah Info About
+                  </button>
+                )}
+              </div>
               <p className="lead">
                 Komunitas mahasiswa independen yang bertujuan membantu mahasiswa UT dimanapun berada. Meningkatkan skill dan keterampilan, serta membangun kekeluargaan antar mahasiswa. Ikuti kami melalui:
               </p>
 
-              <a
-                className="link"
-                href="https://www.instagram.com/ofc.utfamily?igsh=OGJraDRmcTgwbmh1"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-                  <img className="bd bi" src="/assets/icons/instagram.png" alt="" width="40" height="40" />
-                  <div>
-                    Instagram
-                    <small>Kabar dan dokumentasi kegiatan</small>
-                  </div>
-                </div>
-                <span>&#8599;</span>
-              </a>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {aboutItems.map((item) => {
+                  const getIconSrc = (raw?: string) => {
+                    if (!raw) return '/assets/icons/instagram.png';
+                    const lower = raw.toLowerCase();
+                    if (lower.includes('instagram')) return '/assets/icons/instagram.png';
+                    if (lower.includes('whatsapp') || lower.includes('wa')) return '/assets/icons/whatsapp.png';
+                    if (lower.includes('tiktok')) return '/assets/icons/tiktok.png';
+                    return raw;
+                  };
 
-              <a
-                className="link"
-                href="https://www.whatsapp.com/channel/0029VbBvzaKADTOCNeLa4X2S"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-                  <img className="bd bi" src="/assets/icons/whatsapp.png" alt="" width="40" height="40" />
-                  <div>
-                    WhatsApp Channel
-                    <small>Pengumuman resmi komunitas</small>
-                  </div>
-                </div>
-                <span>&#8599;</span>
-              </a>
+                  const iconSrc = getIconSrc(item.icon);
 
-              <a
-                className="link"
-                href="https://linktr.ee/utfamily"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-                  <img className="bd bi" src="/assets/icons/whatsapp.png" alt="" width="40" height="40" />
-                  <div>
-                    Link WA Grup
-                    <small>Kumpulan link grup WhatsApp</small>
-                  </div>
-                </div>
-                <span>&#8599;</span>
-              </a>
+                  return (
+                    <div
+                      key={item.id}
+                      style={{
+                        position: 'relative',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        background: 'var(--card)',
+                        border: '2px solid var(--ink)',
+                        borderRadius: '16px',
+                        padding: '14px 18px',
+                        boxShadow: '3px 3px 0 var(--sh)'
+                      }}
+                    >
+                      <a
+                        href={item.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          textDecoration: 'none',
+                          color: 'inherit',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '14px',
+                          flex: 1,
+                          minWidth: 0
+                        }}
+                      >
+                        <img
+                          className="bd bi"
+                          src={iconSrc}
+                          alt=""
+                          width="40"
+                          height="40"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src = '/assets/icons/instagram.png';
+                          }}
+                        />
+                        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+                          <b style={{ fontSize: '16px', display: 'block', color: 'var(--ink)' }}>
+                            {item.title}
+                          </b>
+                          <small style={{ color: 'var(--ink2)', display: 'block', marginTop: '2px' }}>
+                            {item.description}
+                          </small>
+                        </div>
+                      </a>
 
-              <a
-                className="link"
-                href="https://www.tiktok.com/@ut.familypku?is_from_webapp=1&sender_device=pc"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
-                  <img className="bd bi" src="/assets/icons/tiktok.png" alt="" width="40" height="40" />
-                  <div>
-                    TikTok
-                    <small>Konten video komunitas</small>
-                  </div>
-                </div>
-                <span>&#8599;</span>
-              </a>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        {isUserAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              className="phb"
+                              onClick={(e) => handleOpenEditAbout(item, e)}
+                              style={{ padding: '4px 10px', fontSize: '12px' }}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              className="phb"
+                              onClick={(e) => handleDeleteAbout(item, e)}
+                              style={{ padding: '4px 10px', fontSize: '12px', color: '#E0245E', borderColor: '#E0245E' }}
+                            >
+                              Hapus
+                            </button>
+                          </>
+                        )}
+                        <a
+                          href={item.link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ textDecoration: 'none', color: 'var(--ink)', padding: '6px', fontSize: '16px' }}
+                          title="Buka Link"
+                        >
+                          Kunjungi
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </section>
         )}
@@ -5142,6 +5632,341 @@ export default function App() {
                 </button>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DAFTAR PENGIKUT / MENGIKUTI */}
+      {userListModal && userListModal.open && (
+        <div className="mdl on" onClick={() => setUserListModal(null)} role="dialog" aria-modal="true">
+          <div className="modal-box-clean" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', paddingBottom: '10px', borderBottom: '1.5px solid var(--line)' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>
+                  {userListModal.title}
+                </h3>
+                <span style={{ fontSize: '12px', color: 'var(--ink2)' }}>
+                  {userListModal.users.length} mahasiswa
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUserListModal(null)}
+                aria-label="Tutup"
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  fontSize: '24px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  color: 'var(--ink)',
+                  padding: '2px 8px',
+                  lineHeight: 1
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {userListModal.users.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '36px 16px', color: 'var(--ink2)', fontSize: '14px' }}>
+                  Belum ada mahasiswa dalam daftar ini.
+                </div>
+              ) : (
+                userListModal.users.map((u) => {
+                  const isMe = u.uid === firebaseUser?.uid;
+                  const isFollowingThisUser = (userProfile?.following || []).includes(u.uid);
+
+                  return (
+                    <div key={u.uid} className="user-row-card">
+                      <div
+                        style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, minWidth: 0, cursor: 'pointer' }}
+                        onClick={() => {
+                          setUserListModal(null);
+                          if (isMe) {
+                            window.location.hash = '#/profil';
+                          } else {
+                            setViewedAccount(u);
+                            window.location.hash = `#/akun?u=${encodeURIComponent(u.username)}`;
+                          }
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '40px',
+                            height: '40px',
+                            borderRadius: '50%',
+                            background: 'var(--sky-l)',
+                            border: '1.5px solid var(--line)',
+                            display: 'grid',
+                            placeItems: 'center',
+                            fontWeight: 800,
+                            fontSize: '15px',
+                            color: 'var(--sky-d)',
+                            flexShrink: 0,
+                            overflow: 'hidden'
+                          }}
+                        >
+                          {u.photoURL ? (
+                            <img src={u.photoURL} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            u.displayName?.charAt(0).toUpperCase() || 'U'
+                          )}
+                        </div>
+
+                        <div style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span
+                              style={{
+                                fontSize: '14px',
+                                fontWeight: 700,
+                                color: 'var(--ink)',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}
+                            >
+                              {u.displayName}
+                            </span>
+                            {getUserRoleBadge(u.uid, u.role, u.pjClass)}
+                          </div>
+                          <span style={{ fontSize: '12px', color: 'var(--ink2)', display: 'block' }}>
+                            @{u.username}
+                          </span>
+                        </div>
+                      </div>
+
+                      {!isMe && firebaseUser && (
+                        <button
+                          type="button"
+                          className={`btn-follow-compact ${isFollowingThisUser ? 'following' : ''}`}
+                          onClick={() => handleToggleFollow(u)}
+                        >
+                          {isFollowingThisUser ? 'Mengikuti' : 'Ikuti'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn-follow-compact following"
+                style={{ padding: '8px 24px', fontSize: '13px', width: '100%' }}
+                onClick={() => setUserListModal(null)}
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL EDIT / TAMBAH INFO ABOUT (Admin) */}
+      {isAboutModalOpen && (
+        <div className="mdl on" onClick={() => setIsAboutModalOpen(false)} role="dialog" aria-modal="true">
+          <div className="modal-box-clean" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', paddingBottom: '10px', borderBottom: '1.5px solid var(--line)' }}>
+              <div>
+                <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: 'var(--ink)' }}>
+                  {editingAboutItem ? 'Edit Info About' : 'Tambah Info About'}
+                </h3>
+                <span style={{ fontSize: '12px', color: 'var(--ink2)' }}>
+                  Kelola kontak atau kanal resmi UT Family
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAboutModalOpen(false)}
+                aria-label="Tutup"
+                style={{
+                  border: 'none',
+                  background: 'none',
+                  fontSize: '24px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  color: 'var(--ink)',
+                  padding: '2px 8px',
+                  lineHeight: 1
+                }}
+              >
+                ×
+              </button>
+            </div>
+
+            <form
+              className="modal-body"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSaveAbout();
+              }}
+            >
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '5px' }}>
+                  Judul:
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Instagram Resmi, WhatsApp Channel"
+                  value={aboutFormTitle}
+                  onChange={(e) => setAboutFormTitle(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    color: 'var(--ink)',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '5px' }}>
+                  Deskripsi:
+                </label>
+                <textarea
+                  rows={2}
+                  required
+                  placeholder="Contoh: Kabar terbaru, dokumentasi kegiatan, dan webinar belajar"
+                  value={aboutFormDesc}
+                  onChange={(e) => setAboutFormDesc(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    color: 'var(--ink)',
+                    fontSize: '14px',
+                    lineHeight: 1.5,
+                    resize: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '5px' }}>
+                  Link / URL Tujuan:
+                </label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://..."
+                  value={aboutFormLink}
+                  onChange={(e) => setAboutFormLink(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '9px 12px',
+                    borderRadius: '10px',
+                    border: '1.5px solid var(--line)',
+                    background: 'var(--paper)',
+                    color: 'var(--ink)',
+                    fontSize: '14px',
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: '14px' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, marginBottom: '6px' }}>
+                  Pilihan Icon:
+                </label>
+                <div className="about-icon-grid">
+                  {[
+                    { label: 'Instagram', val: '/assets/icons/instagram.png' },
+                    { label: 'WhatsApp', val: '/assets/icons/whatsapp.png' },
+                    { label: 'TikTok', val: '/assets/icons/tiktok.png' },
+                    { label: 'UT Family', val: '/assets/logo.png' }
+                  ].map((preset) => {
+                    const isSelected = aboutFormIcon === preset.val;
+                    return (
+                      <button
+                        key={preset.val}
+                        type="button"
+                        className={`about-icon-tile ${isSelected ? 'selected' : ''}`}
+                        onClick={() => setAboutFormIcon(preset.val)}
+                      >
+                        <img src={preset.val} alt="" style={{ width: '24px', height: '24px', objectFit: 'contain' }} />
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--ink)' }}>{preset.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '6px 12px',
+                    border: '1.5px solid var(--line)',
+                    borderRadius: '10px',
+                    background: 'var(--paper)'
+                  }}
+                >
+                  <img
+                    src={aboutFormIcon || '/assets/icons/instagram.png'}
+                    alt="Preview"
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      borderRadius: '6px',
+                      objectFit: 'contain',
+                      flexShrink: 0
+                    }}
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).src = '/assets/icons/instagram.png';
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="URL gambar icon (/assets/icons/... atau https://...)"
+                    value={aboutFormIcon}
+                    onChange={(e) => setAboutFormIcon(e.target.value)}
+                    style={{
+                      flex: 1,
+                      border: 'none',
+                      background: 'transparent',
+                      color: 'var(--ink)',
+                      fontSize: '13px',
+                      outline: 'none',
+                      padding: '4px 0'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div className="modal-footer" style={{ marginTop: 'auto' }}>
+                <button
+                  type="button"
+                  className="btn-follow-compact following"
+                  onClick={() => setIsAboutModalOpen(false)}
+                  disabled={isSavingAbout}
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="btn-follow-compact"
+                  disabled={isSavingAbout}
+                  style={{ padding: '8px 22px' }}
+                >
+                  {isSavingAbout ? 'Menyimpan...' : 'Simpan Informasi'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

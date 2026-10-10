@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'moderator' | 'member';
+export type UserRole = 'admin' | 'moderator' | 'pj' | 'member';
 
 export interface ModeratorRights {
   ann?: boolean; // Tulis dan hapus pengumuman
@@ -25,6 +25,7 @@ export interface UserProfile {
   photoURL?: string;
   role: UserRole;
   pjClass?: string | null;
+  pjClasses?: string[];
   following?: string[];
   hm?: ModeratorRights;
   hk?: PjRights;
@@ -76,6 +77,7 @@ export interface PostItem {
   topic: string;
   classId?: string;
   isPinned?: boolean;
+  pinnedAt?: number;
   likesCount: number;
   commentsCount: number;
   likes: string[]; // uids of users who liked
@@ -178,4 +180,13 @@ export interface ReportItem {
   contentSnippet: string;
   status: 'pending' | 'resolved' | 'dismissed';
   createdAt: number;
+}
+
+export interface AboutItem {
+  id: string;
+  title: string;
+  description: string;
+  link: string;
+  icon?: string;
+  createdAt?: number;
 }

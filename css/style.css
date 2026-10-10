@@ -617,5 +617,113 @@ a.phb{display:inline-flex;align-items:center}
   position: relative;
 }
 
+.modal-box-clean {
+  width: min(480px, calc(100vw - 32px));
+  background: var(--card);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+  border-radius: 22px;
+  box-shadow: 6px 6px 0 var(--sh);
+  padding: 20px 22px;
+  max-height: min(88vh, 660px);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  text-align: left;
+  overflow: hidden;
+  box-sizing: border-box;
+  animation: cin .25s cubic-bezier(.2,.8,.2,1);
+}
+
+.modal-box-clean .modal-body {
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 4px;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-box-clean .modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.user-row-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1.5px solid var(--line);
+  background: var(--card);
+  transition: transform 0.15s, border-color 0.15s;
+}
+
+.user-row-card:hover {
+  border-color: var(--sky-d);
+}
+
+.btn-follow-compact {
+  width: auto !important;
+  flex-shrink: 0;
+  padding: 6px 16px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1.5px solid var(--ink);
+  background: var(--hbtn);
+  color: var(--hbtn-t);
+  transition: all 0.15s;
+}
+
+.btn-follow-compact.following {
+  background: transparent;
+  color: var(--ink);
+  border: 1.5px solid var(--line);
+}
+
+.btn-follow-compact.following:hover {
+  border-color: #E0245E;
+  color: #E0245E;
+}
+
+.about-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.about-icon-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 4px;
+  border-radius: 12px;
+  border: 1.5px solid var(--line);
+  background: var(--paper);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.about-icon-tile:hover {
+  border-color: var(--sky-d);
+}
+
+.about-icon-tile.selected {
+  border-color: var(--hi);
+  background: var(--sky-l);
+  box-shadow: 0 0 0 1px var(--hi);
+}
+
 
 

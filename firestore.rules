@@ -48,8 +48,10 @@ service cloud.firestore {
     function isPj(classId) {
       return isAdmin() || (
         isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        getUserData(request.auth.uid).pjClass == classId
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          getUserData(request.auth.uid).get('pjClass', '') == classId ||
+          getUserData(request.auth.uid).get('pjClasses', []).hasAny([classId])
+        )
       );
     }
 
@@ -69,13 +71,14 @@ service cloud.firestore {
         (request.auth.token.email != 'rahmatadisaputra021@gmail.com' && request.resource.data.role == 'member')
       );
 
-      // Update: Admin can update any user; owner can update profile fields but NOT role/pjClass/hm/hk
+      // Update: Admin can update any user; owner can update profile fields but NOT role/pjClass/pjClasses/hm/hk
       allow update: if isSignedIn() && (
         isAdmin() ||
         (
           request.auth.uid == userId &&
           request.resource.data.role == resource.data.role &&
           request.resource.data.get('pjClass', null) == resource.data.get('pjClass', null) &&
+          request.resource.data.get('pjClasses', null) == resource.data.get('pjClasses', null) &&
           request.resource.data.get('hm', null) == resource.data.get('hm', null) &&
           request.resource.data.get('hk', null) == resource.data.get('hk', null)
         )
@@ -179,6 +182,35 @@ service cloud.firestore {
           request.auth.uid == resource.data.uid
         );
       }
+
+      // Pertemuan / Meetings subcollection (Preview: judul, tujuan, status isLocked, notice)
+      match /meetings/{meetingId} {
+        // Preview dapat dibaca oleh seluruh anggota terdaftar
+        allow read: if isSignedIn();
+        // Hanya Admin atau PJ kelas tersebut yang dapat mengunci/membuka atau mengedit preview
+        allow write: if isPj(classId) || isAdmin();
+
+        // Contents subcollection (Isi lengkap: referensi, materi, kuis)
+        // PENEGAKAN SERVER-SIDE:
+        // Anggota HANYA bisa membaca jika pertemuan sudah dibuka (isLocked == false).
+        // Selama pertemuan terkunci, Firestore menolak request baca dari browser anggota!
+        match /contents/{contentId} {
+          allow read: if isSignedIn() && (
+            isAdmin() ||
+            isPj(classId) ||
+            get(/databases/$(database)/documents/kelas/$(classId)/meetings/$(meetingId)).data.isLocked == false
+          );
+          allow write: if isPj(classId) || isAdmin();
+        }
+
+        // Answers subcollection (Kunci jawaban & pembahasan)
+        // PENEGAKAN SERVER-SIDE:
+        // HANYA Admin dan PJ kelas bersangkutan yang memiliki izin baca/tulis.
+        // Anggota kelas TIDAK PERNAH memiliki izin akses ke dokumen kunci jawaban ini!
+        match /answers/{answerId} {
+          allow read, write: if isSignedIn() && (isAdmin() || isPj(classId));
+        }
+      }
     }
 
     // REPORTS COLLECTION
@@ -198,6 +230,12 @@ service cloud.firestore {
     match /notifications/{userId}/items/{itemId} {
       allow read, update, delete: if isOwner(userId);
       allow create: if isSignedIn();
+    }
+
+    // ABOUT ITEMS COLLECTION
+    match /about_items/{itemId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

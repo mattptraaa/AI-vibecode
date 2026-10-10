@@ -9,41 +9,24 @@ export const ToolsMahasiswa: React.FC = () => {
 
       {/* Main Panel Cards */}
       <div className="panel2" style={{ marginBottom: '20px' }}>
-        {/* Tools UAS: langsung ke situs eksternal */}
+        {/* Tools UAS */}
         <a
           href="https://tools-uas.utfamily.my.id/"
           target="_blank"
           rel="noopener noreferrer"
           className="k"
-          style={{
-            textDecoration: 'none',
-            color: 'inherit',
-            textAlign: 'left',
-            border: '2px solid var(--sky-d)'
-          }}
+          style={{ textDecoration: 'none', color: 'inherit' }}
         >
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-              <GraduationCap size={20} color="var(--sky-d)" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <GraduationCap size={18} color="var(--sky-d)" />
               <b>Tools UAS (Ujian Akhir Semester)</b>
-              <span
-                style={{
-                  fontSize: '11px',
-                  background: 'var(--sky-l)',
-                  color: 'var(--ink)',
-                  padding: '2px 8px',
-                  borderRadius: '999px',
-                  fontWeight: 700
-                }}
-              >
-                Struktur & Logika
-              </span>
             </div>
             <small>
               Buat latihan soal uas dari gabungan materi modul, inisiasi tuton dan target modul di tools-uas.utfamily.my.id
             </small>
           </div>
-          <em>Kunjungi Situs &#8599;</em>
+          <em>Kunjungi Situs</em>
         </a>
 
         <a
@@ -60,7 +43,7 @@ export const ToolsMahasiswa: React.FC = () => {
             </div>
             <small>Hitung perkiraan nilai akhir dari jumlah soal yang benar dan nilai tuton di kalkulator-nilai.utfamily.my.id</small>
           </div>
-          <em>Kunjungi Situs &#8599;</em>
+          <em>Kunjungi Situs</em>
         </a>
 
         <a
@@ -77,7 +60,7 @@ export const ToolsMahasiswa: React.FC = () => {
             </div>
             <small>Periksa kecocokan sitasi dengan daftar pustaka dan lihat skor gaya tulisan di cek-sitasi.utfamily.my.id</small>
           </div>
-          <em>Kunjungi Situs &#8599;</em>
+          <em>Kunjungi Situs</em>
         </a>
 
         <a
@@ -94,7 +77,7 @@ export const ToolsMahasiswa: React.FC = () => {
             </div>
             <small>Kunjungi tools nugas di subdomain tools-tugas.utfamily.my.id untuk membuat kerangka tugas kuliah otomatis</small>
           </div>
-          <em>Kunjungi Situs &#8599;</em>
+          <em>Kunjungi Situs</em>
         </a>
       </div>
     </div>

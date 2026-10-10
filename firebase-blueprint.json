@@ -177,6 +177,58 @@
         "createdAt": { "type": "string" }
       },
       "required": ["toUid", "fromUid", "type", "createdAt"]
+    },
+    "MeetingPreview": {
+      "title": "MeetingPreview",
+      "description": "Preview of class meeting including title, notice, isLocked, and tujuan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "classId": { "type": "string" },
+        "meetingNumber": { "type": "number" },
+        "title": { "type": "string" },
+        "isLocked": { "type": "boolean" },
+        "notice": { "type": "string" },
+        "tujuan": { "type": "object" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "classId", "meetingNumber", "title", "isLocked", "tujuan"]
+    },
+    "MeetingContent": {
+      "title": "MeetingContent",
+      "description": "Full content of class meeting including referensi, materi, and kuis",
+      "type": "object",
+      "properties": {
+        "referensi": { "type": "object" },
+        "materi": { "type": "array" },
+        "kuis": { "type": "object" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["referensi", "materi", "kuis"]
+    },
+    "MeetingAnswers": {
+      "title": "MeetingAnswers",
+      "description": "Quiz answer keys and discussions restricted to Admin and PJ",
+      "type": "object",
+      "properties": {
+        "answers": { "type": "array" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["answers"]
+    },
+    "AboutItem": {
+      "title": "AboutItem",
+      "description": "About page informational links and cards",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "link": { "type": "string" },
+        "icon": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["title", "description", "link"]
     }
   },
   "firestore": {
@@ -208,6 +260,18 @@
       "schema": "ForumQuestion",
       "description": "Questions and answers for class forum"
     },
+    "/kelas/{classId}/meetings/{meetingId}": {
+      "schema": "MeetingPreview",
+      "description": "Meeting preview document readable by members"
+    },
+    "/kelas/{classId}/meetings/{meetingId}/contents/{contentId}": {
+      "schema": "MeetingContent",
+      "description": "Meeting full content readable by members only when unlocked"
+    },
+    "/kelas/{classId}/meetings/{meetingId}/answers/{answerId}": {
+      "schema": "MeetingAnswers",
+      "description": "Meeting answer keys readable only by Admin and PJ"
+    },
     "/reports/{reportId}": {
       "schema": "Report",
       "description": "Moderation reports"
@@ -219,6 +283,10 @@
     "/notifications/{userId}/items/{itemId}": {
       "schema": "Notification",
       "description": "Personal user notifications"
+    },
+    "/about_items/{itemId}": {
+      "schema": "AboutItem",
+      "description": "About page informational links and social cards"
     }
   }
 }
